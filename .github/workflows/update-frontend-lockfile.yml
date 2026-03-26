@@ -1,0 +1,26 @@
+name: Verify frontend build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm install
+
+      - name: Verify plugin exists (ESM)
+        working-directory: frontend
+        run: node -e "import('@vitejs/plugin-react').then(()=>console.log('plugin ok')).catch(e=>{console.error(e); process.exit(1);})"
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
