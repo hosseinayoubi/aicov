@@ -22,7 +22,3 @@ export default function ChatBox({ systemPrompt, setSystemPrompt }) {
     </div>
   );
 }
-
-
-
-================================================
