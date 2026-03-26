@@ -5,7 +5,3 @@ export default function StatusBar({ status, wsStatus, mode }) {
     </div>
   );
 }
-
-
-
-================================================
