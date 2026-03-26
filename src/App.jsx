@@ -1,4 +1,3 @@
-\
 import { useEffect, useMemo, useRef, useState } from "react";
 import StatusBar from "./components/StatusBar.jsx";
 import SuggestionPanel from "./components/SuggestionPanel.jsx";
