@@ -5,7 +5,3 @@ export default function SuggestionPanel({ text }) {
     </div>
   );
 }
-
-
-
-================================================
