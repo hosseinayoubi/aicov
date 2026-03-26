@@ -1,4 +1,3 @@
-\
 /**
  * Vercel Serverless Function: /api/stream
  * - Proxies xAI Chat Completions with stream=true (SSE upstream)
