@@ -1,188 +1,325 @@
-:root{
-  --bg: #0b1220;
-  --panel: rgba(255,255,255,0.04);
-  --panel2: rgba(255,255,255,0.06);
-  --border: rgba(255,255,255,0.10);
-  --text: #e5e7eb;
-  --muted: rgba(229,231,235,0.65);
-  --accent: #60a5fa;
+/* ── Design Tokens ─────────────────────────────────────────────────── */
+:root {
+  --bg      : #0b1220;
+  --panel   : rgba(255, 255, 255, 0.04);
+  --border  : rgba(255, 255, 255, 0.09);
+  --text    : #e5e7eb;
+  --muted   : rgba(229, 231, 235, 0.50);
+  --accent  : #60a5fa;
+  --green   : #4ade80;
+  --red     : #f87171;
+  --yellow  : #fbbf24;
 }
 
-*{ box-sizing: border-box; }
+/* ── Reset ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* prevent horizontal jump when content height changes (Live toggle) */
-html{
-  overflow-y: scroll;
-  scrollbar-gutter: stable;
+/* Prevent horizontal jump when scrollbar appears */
+html { overflow-y: scroll; scrollbar-gutter: stable; }
+
+/* ── Base ──────────────────────────────────────────────────────────── */
+body {
+  background:
+    radial-gradient(ellipse 1200px 600px at 30% -10%, rgba(96, 165, 250, 0.17), transparent 60%),
+    radial-gradient(ellipse 900px 500px  at 80%   0%, rgba(167,139, 250, 0.13), transparent 55%),
+    var(--bg);
+  color      : var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  min-height : 100vh;
+  -webkit-font-smoothing: antialiased;
 }
 
-body{
-  margin: 0;
-  background: radial-gradient(1200px 600px at 30% -10%, rgba(96,165,250,0.18), transparent 60%),
-              radial-gradient(900px 500px at 80% 0%, rgba(167,139,250,0.14), transparent 55%),
-              var(--bg);
-  color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-}
-
-.appShell{
+/* ── Shell ─────────────────────────────────────────────────────────── */
+.appShell {
   max-width: 860px;
-  margin: 0 auto;
-  padding: 18px 16px 28px;
+  margin   : 0 auto;
+  padding  : 20px 16px 36px;
 }
 
-.appTop{
-  display: flex;
-  align-items: center;
+/* ── Header ────────────────────────────────────────────────────────── */
+.appTop {
+  display        : flex;
+  align-items    : center;
   justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 14px;
+  gap            : 14px;
+  flex-wrap      : wrap;
+  margin-bottom  : 4px;
 }
 
-.brand{
-  display: flex;
+.brand {
+  display    : flex;
   align-items: center;
-  gap: 10px;
+  gap        : 10px;
 }
 
-.logoDot{
-  width: 12px;
-  height: 12px;
+.logoDot {
+  width        : 11px;
+  height       : 11px;
+  border-radius: 50%;
+  background   : var(--accent);
+  box-shadow   : 0 0 18px rgba(96, 165, 250, 0.55);
+  flex-shrink  : 0;
+  transition   : box-shadow 300ms;
+}
+
+.logoDotActive {
+  animation: logoPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes logoPulse {
+  0%, 100% { box-shadow: 0 0 18px rgba(96, 165, 250, 0.55); transform: scale(1); }
+  50%       { box-shadow: 0 0 28px rgba(96, 165, 250, 0.85), 0 0 0 5px rgba(96, 165, 250, 0.12); transform: scale(1.18); }
+}
+
+.brandTitle { font-size: 15px; font-weight: 700; letter-spacing: 0.15px; }
+.brandSub   { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* ── Controls row ──────────────────────────────────────────────────── */
+.controlsRow {
+  display    : flex;
+  align-items: center;
+  gap        : 8px;
+  flex-wrap  : wrap;
+}
+
+/* ── Mode chips ────────────────────────────────────────────────────── */
+.chip {
+  display      : inline-flex;
+  align-items  : center;
+  gap          : 5px;
+  padding      : 7px 14px;
   border-radius: 999px;
-  background: var(--accent);
-  box-shadow: 0 0 20px rgba(96,165,250,0.6);
+  border       : 1px solid var(--border);
+  background   : rgba(255, 255, 255, 0.04);
+  color        : var(--text);
+  font-size    : 13px;
+  cursor       : pointer;
+  white-space  : nowrap;
+  transition   : background 140ms, border-color 140ms, color 140ms;
+}
+.chip:hover  { background: rgba(255, 255, 255, 0.07); }
+.chip.active {
+  border-color: rgba(96, 165, 250, 0.55);
+  background  : rgba(96, 165, 250, 0.12);
+  color       : #93c5fd;
 }
 
-.brandTitle{ font-size: 16px; font-weight: 700; letter-spacing: 0.2px; }
-.brandSub{ font-size: 12px; color: var(--muted); margin-top: 1px; }
-
-.controlsRow{
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+/* ── Toggle ────────────────────────────────────────────────────────── */
+.toggle {
+  display      : inline-flex;
+  align-items  : center;
+  gap          : 8px;
+  padding      : 7px 12px;
+  border-radius: 999px;
+  border       : 1px solid var(--border);
+  background   : rgba(255, 255, 255, 0.04);
+  cursor       : pointer;
+  user-select  : none;
 }
+.toggle input { display: none; }
 
-.card{
-  background: var(--panel);
-  border: 1px solid var(--border);
+.toggleTrack {
+  width        : 36px;
+  height       : 20px;
+  border-radius: 999px;
+  border       : 1px solid var(--border);
+  background   : rgba(255, 255, 255, 0.07);
+  position     : relative;
+  flex-shrink  : 0;
+  transition   : background 180ms, border-color 180ms;
+}
+.toggleTrack::after {
+  content      : "";
+  width        : 14px;
+  height       : 14px;
+  border-radius: 50%;
+  background   : rgba(255, 255, 255, 0.75);
+  position     : absolute;
+  top          : 50%;
+  left         : 2px;
+  transform    : translateY(-50%);
+  transition   : left 180ms ease, background 180ms;
+}
+.toggle input:checked + .toggleTrack {
+  background  : rgba(96, 165, 250, 0.18);
+  border-color: rgba(96, 165, 250, 0.55);
+}
+.toggle input:checked + .toggleTrack::after {
+  left      : 18px;
+  background: #60a5fa;
+}
+.toggleLabel { font-size: 13px; color: var(--muted); }
+
+/* ── Status bar ────────────────────────────────────────────────────── */
+.statusBar {
+  display      : flex;
+  align-items  : center;
+  gap          : 8px;
+  font-size    : 13px;
+  color        : rgba(229, 231, 235, 0.75);
+  background   : var(--panel);
+  border       : 1px solid var(--border);
+  border-radius: 12px;
+  padding      : 10px 14px;
+  margin-top   : 12px;
+  flex-wrap    : wrap;
+}
+.statusDot {
+  width        : 7px;
+  height       : 7px;
+  border-radius: 50%;
+  flex-shrink  : 0;
+}
+.statusDot.green  { background: var(--green);  box-shadow: 0 0 7px rgba(74, 222, 128, 0.65); }
+.statusDot.red    { background: var(--red);    box-shadow: 0 0 7px rgba(248,113, 113, 0.65); }
+.statusDot.yellow { background: var(--yellow); box-shadow: 0 0 7px rgba(251,191,  36, 0.65); }
+.statusDot.blue   { background: var(--accent); box-shadow: 0 0 7px rgba(96, 165, 250, 0.65); }
+.statusDot.gray   { background: rgba(229, 231, 235, 0.25); }
+.statusSep        { color: rgba(255, 255, 255, 0.18); margin: 0 2px; }
+
+/* ── Cards ─────────────────────────────────────────────────────────── */
+.card {
+  background   : var(--panel);
+  border       : 1px solid var(--border);
   border-radius: 16px;
-  padding: 14px;
-  margin-top: 12px;
-  box-shadow: 0 10px 28px rgba(0,0,0,0.25);
+  padding      : 16px;
+  margin-top   : 12px;
 }
 
-.cardTitle{
-  font-size: 13px;
-  color: var(--muted);
+.cardTitle {
+  font-size    : 12px;
+  color        : var(--muted);
   margin-bottom: 10px;
+  letter-spacing: 0.25px;
+  text-transform: uppercase;
 }
 
-.transcriptBox{
-  width: 100%;
-  min-height: 64px;
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: rgba(0,0,0,0.18);
-  white-space: pre-wrap;
-  line-height: 1.5;
+/* ── Transcript box ────────────────────────────────────────────────── */
+.transcriptBox {
+  width       : 100%;
+  min-height  : 66px;
+  padding     : 12px;
+  border-radius: 10px;
+  border      : 1px solid var(--border);
+  background  : rgba(0, 0, 0, 0.18);
+  white-space : pre-wrap;
+  line-height : 1.6;
+  font-size   : 14px;
 }
 
-.hint{
+.placeholder { color: var(--muted); }
+
+.hint {
   margin-top: 8px;
-  font-size: 12px;
-  color: var(--muted);
+  font-size : 12px;
+  color     : var(--muted);
 }
 
-.chip{
-  background: rgba(255,255,255,0.04);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 8px 10px;
-  border-radius: 999px;
-  cursor: pointer;
-}
-.chip:hover{ background: rgba(255,255,255,0.07); }
-.chip.active{
-  border-color: rgba(96,165,250,0.55);
-  background: rgba(96,165,250,0.12);
+/* ── Suggestion panel ──────────────────────────────────────────────── */
+.suggestionText {
+  font-size  : 1rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  min-height : 28px;
 }
 
-.bottomBar{
-  display: flex;
+.listeningState {
+  color    : var(--muted);
+  font-size: 1rem;
+}
+.dot {
+  display         : inline-block;
+  animation       : dotBlink 1.3s infinite;
+  animation-fill-mode: both;
+}
+.dot:nth-child(2) { animation-delay: 0.18s; }
+.dot:nth-child(3) { animation-delay: 0.36s; }
+
+@keyframes dotBlink {
+  0%, 80%, 100% { opacity: 0.2; }
+  40%           { opacity: 1;   }
+}
+
+/* ── Context / Prompt textarea ─────────────────────────────────────── */
+.promptLabel {
+  font-size    : 12px;
+  color        : var(--muted);
+  margin-bottom: 9px;
+  letter-spacing: 0.25px;
+  text-transform: uppercase;
+}
+.promptTextarea {
+  width       : 100%;
+  padding     : 10px 12px;
+  background  : rgba(0, 0, 0, 0.2);
+  color       : var(--text);
+  border      : 1px solid var(--border);
+  border-radius: 10px;
+  outline     : none;
+  resize      : vertical;
+  font-family : inherit;
+  font-size   : 13px;
+  line-height : 1.6;
+  transition  : border-color 150ms;
+}
+.promptTextarea:focus { border-color: rgba(96, 165, 250, 0.40); }
+.promptTextarea::placeholder { color: var(--muted); }
+
+/* ── Bottom bar ────────────────────────────────────────────────────── */
+.bottomBar {
+  display    : flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 14px;
+  gap        : 10px;
+  flex-wrap  : wrap;
+  margin-top : 16px;
 }
 
-.btn{
-  padding: 10px 14px;
+.btn {
+  padding      : 10px 22px;
   border-radius: 12px;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,0.05);
-  color: var(--text);
-  cursor: pointer;
+  border       : 1px solid var(--border);
+  background   : rgba(255, 255, 255, 0.05);
+  color        : var(--text);
+  cursor       : pointer;
+  font-size    : 14px;
+  font-weight  : 500;
+  transition   : background 140ms, border-color 140ms;
 }
-.btn:hover{ background: rgba(255,255,255,0.08); }
-.btn.primary{
-  border-color: rgba(96,165,250,0.55);
-  background: rgba(96,165,250,0.14);
-}
+.btn:hover { background: rgba(255, 255, 255, 0.08); }
 
-.meta{
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--muted);
-  display: flex;
+.btnStart {
+  border-color: rgba(74, 222, 128, 0.40);
+  background  : rgba(74, 222, 128, 0.08);
+  color       : #86efac;
+}
+.btnStart:hover { background: rgba(74, 222, 128, 0.13); }
+
+.btnStop {
+  border-color: rgba(248, 113, 113, 0.40);
+  background  : rgba(248, 113, 113, 0.08);
+  color       : #fca5a5;
+}
+.btnStop:hover { background: rgba(248, 113, 113, 0.13); }
+
+.meta {
+  margin-left   : auto;
+  font-size     : 12px;
+  color         : var(--muted);
+  text-align    : right;
+  display       : flex;
   flex-direction: column;
-  gap: 2px;
+  gap           : 3px;
+  line-height   : 1.4;
 }
 
-/* Toggle */
-.toggle{
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,0.04);
-  cursor: pointer;
-  user-select: none;
+.unsupportedNote {
+  font-size: 13px;
+  color    : var(--red);
 }
-.toggle input{ display: none; }
-.toggleUi{
-  width: 36px;
-  height: 20px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,0.07);
-  position: relative;
-}
-.toggleUi::after{
-  content: "";
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
-  background: rgba(255,255,255,0.75);
-  position: absolute;
-  top: 50%;
-  left: 3px;
-  transform: translateY(-50%);
-  transition: all 180ms ease;
-}
-.toggle input:checked + .toggleUi{
-  background: rgba(96,165,250,0.18);
-  border-color: rgba(96,165,250,0.55);
-}
-.toggle input:checked + .toggleUi::after{
-  left: 18px;
-  background: rgba(96,165,250,0.95);
-}
-.toggleText{
-  font-size: 12px;
-  color: var(--muted);
+
+/* ── Responsive ────────────────────────────────────────────────────── */
+@media (max-width: 580px) {
+  .appTop      { flex-direction: column; align-items: flex-start; }
+  .controlsRow { width: 100%; }
+  .meta        { margin-left: 0; text-align: left; }
 }
