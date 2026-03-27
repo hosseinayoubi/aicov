@@ -1,7 +1,25 @@
+const STATUS_MAP = {
+  idle          : { dot: "gray",   label: "idle"        },
+  listening     : { dot: "green",  label: "listening"   },
+  thinking      : { dot: "yellow", label: "thinking"    },
+  replying      : { dot: "blue",   label: "replying"    },
+  backend_error : { dot: "red",    label: "error"       },
+  unsupported   : { dot: "red",    label: "unsupported" },
+};
+
 export default function StatusBar({ status, wsStatus, mode }) {
+  const cfg    = STATUS_MAP[status] ?? { dot: "gray", label: status };
+  const wsDot  = wsStatus === "connected" ? "green" : "red";
+
   return (
-    <div style={{ opacity: 0.9, fontSize: 13, color: "rgba(229,231,235,0.85)" }}>
-      Status: <b>{status}</b> &nbsp;|&nbsp; WS: <b>{wsStatus}</b> &nbsp;|&nbsp; Mode: <b>{mode}</b>
+    <div className="statusBar">
+      <span className={`statusDot ${cfg.dot}`} />
+      <span>Status: <b>{cfg.label}</b></span>
+      <span className="statusSep">|</span>
+      <span className={`statusDot ${wsDot}`} />
+      <span>WS: <b>{wsStatus}</b></span>
+      <span className="statusSep">|</span>
+      <span>Mode: <b>{mode}</b></span>
     </div>
   );
 }
