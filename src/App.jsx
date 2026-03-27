@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import StatusBar from "./components/StatusBar.jsx";
 import SuggestionPanel from "./components/SuggestionPanel.jsx";
 import ChatBox from "./components/ChatBox.jsx";
+import TranscriptPanel from "./components/TranscriptPanel.jsx";
 
+/* ── Helpers ──────────────────────────────────────────────────────────── */
 function makeId() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
@@ -17,56 +19,64 @@ function hashText(s) {
   return (h >>> 0).toString(16);
 }
 
-const AUTO_STOP_MS = 2 * 60 * 1000; // 2 minutes
+/* ── Tuning constants ─────────────────────────────────────────────────── */
+const AUTO_STOP_MS        = 2 * 60 * 1000; // 2 min
+const RESTART_DEBOUNCE_MS = 100;           // gap before restarting recognition
+const SHORT_SILENCE_MS    = 500;           // send after this pause (was 700)
+const LONG_GATE_PROACTIVE = 3_000;         // fallback gate – proactive mode (was 5000)
+const LONG_GATE_DEEP      = 1_500;         // fallback gate – deep mode (was 2000)
+const WORD_FLUSH_THRESH   = 8;             // flush immediately at this many words
+
+/* ─────────────────────────────────────────────────────────────────────── */
 
 export default function App() {
-  const [status, setStatus]           = useState("idle");
-  const [wsStatus, setWsStatus]       = useState("connected");
+  const [status,       setStatus]       = useState("idle");
+  const [wsStatus,     setWsStatus]     = useState("connected");
   const [systemPrompt, setSystemPrompt] = useState("You are a proactive AI copilot.");
-  const [mode, setMode]               = useState("proactive");
-  const [showLive, setShowLive]       = useState(true);
-  const [finalText, setFinalText]     = useState("");
-  const [interimText, setInterimText] = useState("");
-  const [reply, setReply]             = useState("");
-  const [liveReply, setLiveReply]     = useState("");
-  const [isListening, setIsListening] = useState(false);
+  const [mode,         setMode]         = useState("proactive");
+  const [transcriptOpen, setTranscriptOpen] = useState(true);   // ← drawer state
+  const [finalText,    setFinalText]    = useState("");
+  const [interimText,  setInterimText]  = useState("");
+  const [reply,        setReply]        = useState("");
+  const [liveReply,    setLiveReply]    = useState("");
+  const [isListening,  setIsListening]  = useState(false);
 
-  // ── Refs to prevent stale closures inside async / event handlers ──
-  const isListeningRef   = useRef(false);
-  const showLiveRef      = useRef(true);
-  const modeRef          = useRef("proactive");
-  const systemPromptRef  = useRef("You are a proactive AI copilot.");
+  /* ── Refs (prevent stale closures) ── */
+  const isListeningRef     = useRef(false);
+  const modeRef            = useRef("proactive");
+  const systemPromptRef    = useRef("You are a proactive AI copilot.");
 
-  const recognitionRef      = useRef(null);
-  const bufferFinalRef      = useRef("");
-  const lastSentHashRef     = useRef("");
-  const shortSilenceTimerRef = useRef(null);
-  const longGateTimerRef    = useRef(null);
-  const typeTimerRef        = useRef(null);
-  const lastRequestIdRef    = useRef("");
-  const abortRef            = useRef(null);
-  const autoStopTimerRef    = useRef(null);
+  const recognitionRef     = useRef(null);
+  const recActiveRef       = useRef(false);  // true while rec.start() is in effect
+  const bufferFinalRef     = useRef("");
+  const lastSentHashRef    = useRef("");
+  const shortSilTimerRef   = useRef(null);
+  const longGateTimerRef   = useRef(null);
+  const typeTimerRef       = useRef(null);
+  const lastRequestIdRef   = useRef("");
+  const abortRef           = useRef(null);
+  const autoStopTimerRef   = useRef(null);
+  const restartTimerRef    = useRef(null);
 
-  // Keep refs in sync
-  useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
-  useEffect(() => { showLiveRef.current = showLive; if (!showLive) setInterimText(""); }, [showLive]);
-  useEffect(() => { modeRef.current = mode; }, [mode]);
+  /* ── Sync refs with state ── */
+  useEffect(() => { isListeningRef.current  = isListening;  }, [isListening]);
+  useEffect(() => { modeRef.current         = mode;         }, [mode]);
   useEffect(() => { systemPromptRef.current = systemPrompt; }, [systemPrompt]);
 
-  // ── Timers ──────────────────────────────────────────────────────────
+  /* ── Timer helpers ── */
   function clearAdaptiveTimers() {
-    clearTimeout(shortSilenceTimerRef.current);
+    clearTimeout(shortSilTimerRef.current);
     clearTimeout(longGateTimerRef.current);
-    shortSilenceTimerRef.current = null;
-    longGateTimerRef.current     = null;
+    shortSilTimerRef.current = null;
+    longGateTimerRef.current  = null;
   }
 
   function resetAutoStop() {
     clearTimeout(autoStopTimerRef.current);
     autoStopTimerRef.current = setTimeout(() => {
       if (!isListeningRef.current) return;
-      // Inline stop (avoids stale closure on stopListening)
       isListeningRef.current = false;
+      recActiveRef.current   = false;
       setIsListening(false);
       setStatus("idle");
       clearAdaptiveTimers();
@@ -75,7 +85,7 @@ export default function App() {
     }, AUTO_STOP_MS);
   }
 
-  // ── Typewriter effect ───────────────────────────────────────────────
+  /* ── Typewriter ── */
   function startTypeReply(text) {
     const words = String(text || "").split(/\s+/).filter(Boolean);
     let i = 0;
@@ -88,10 +98,10 @@ export default function App() {
         clearInterval(typeTimerRef.current);
         typeTimerRef.current = null;
       }
-    }, 30);
+    }, 28);
   }
 
-  // ── Backend streaming ───────────────────────────────────────────────
+  /* ── Backend streaming ── */
   async function sendToBackend(text) {
     const clean = String(text || "").trim();
     if (!clean) return;
@@ -102,8 +112,8 @@ export default function App() {
 
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
-    abortRef.current  = controller;
-    const requestId   = makeId();
+    abortRef.current = controller;
+    const requestId  = makeId();
     lastRequestIdRef.current = requestId;
 
     setStatus("thinking");
@@ -158,70 +168,113 @@ export default function App() {
     }
   }
 
-  // ── Adaptive send scheduler ─────────────────────────────────────────
+  /* ── Flush buffer ── */
+  function flushBuffer() {
+    const t = (bufferFinalRef.current || "").trim();
+    if (!t) return;
+    bufferFinalRef.current = "";
+    sendToBackend(t);
+  }
+
+  /* ── Adaptive send scheduler ── */
   function scheduleAdaptiveFlush() {
     if (!(bufferFinalRef.current || "").trim()) return;
     clearAdaptiveTimers();
 
-    // Fast path: send after 700ms pause
-    shortSilenceTimerRef.current = setTimeout(() => {
-      const t = (bufferFinalRef.current || "").trim();
-      if (t) { bufferFinalRef.current = ""; sendToBackend(t); }
-    }, 700);
+    // Immediate flush if we already have enough words
+    const words = bufferFinalRef.current.trim().split(/\s+/).length;
+    if (words >= WORD_FLUSH_THRESH) {
+      flushBuffer();
+      return;
+    }
 
-    // Fallback gate
-    longGateTimerRef.current = setTimeout(() => {
-      const t = (bufferFinalRef.current || "").trim();
-      if (t) { bufferFinalRef.current = ""; sendToBackend(t); }
-    }, modeRef.current === "proactive" ? 5000 : 2000);
+    // Short-silence fast path
+    shortSilTimerRef.current = setTimeout(flushBuffer, SHORT_SILENCE_MS);
+
+    // Long-gate fallback
+    const gateMs = modeRef.current === "proactive"
+      ? LONG_GATE_PROACTIVE
+      : LONG_GATE_DEEP;
+    longGateTimerRef.current = setTimeout(flushBuffer, gateMs);
   }
 
-  // ── Speech Recognition ──────────────────────────────────────────────
+  /* ── Safe recognition start (prevents double-start) ── */
+  function safeStart() {
+    if (!recognitionRef.current || recActiveRef.current) return;
+    recActiveRef.current = true;
+    try {
+      recognitionRef.current.start();
+    } catch (e) {
+      recActiveRef.current = false;
+      console.warn("rec.start() error:", e);
+    }
+  }
+
+  /* ── Speech recognition init ── */
   function initSpeech() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setStatus("unsupported"); return; }
 
     const rec = new SR();
-    rec.continuous     = true;
-    rec.interimResults = true;
-    rec.lang           = "en-US";
+    rec.continuous      = true;
+    rec.interimResults  = true;
+    rec.lang            = "en-US";
+    rec.maxAlternatives = 1;
+
+    rec.onstart = () => {
+      recActiveRef.current = true;
+    };
 
     rec.onresult = (e) => {
       let interim  = "";
       let newFinal = "";
+
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i];
         const t = r?.[0]?.transcript || "";
         if (r.isFinal) newFinal += " " + t;
         else            interim  += " " + t;
       }
+
       const cleanFinal   = newFinal.trim();
       const cleanInterim = interim.trim();
 
       if (cleanFinal) {
-        setFinalText((prev) => (prev ? prev + " " + cleanFinal : cleanFinal).trim());
-        bufferFinalRef.current = (bufferFinalRef.current + " " + cleanFinal).trim();
+        setFinalText((prev) =>
+          (prev ? prev + " " + cleanFinal : cleanFinal).trim()
+        );
+        bufferFinalRef.current = (
+          bufferFinalRef.current + " " + cleanFinal
+        ).trim();
         scheduleAdaptiveFlush();
         resetAutoStop();
       }
-      setInterimText(showLiveRef.current ? cleanInterim : "");
+      // Always update interim so the drawer shows live typing
+      setInterimText(cleanInterim);
     };
 
     rec.onerror = (e) => {
-      console.error("Speech error:", e.error);
-      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      console.warn("Speech error:", e.error);
+      recActiveRef.current = false;
+      if (
+        e.error === "not-allowed" ||
+        e.error === "service-not-allowed"
+      ) {
         setStatus("unsupported");
         setIsListening(false);
         isListeningRef.current = false;
       }
-      // 'no-speech' is expected during silence – let onend handle restart
+      // "no-speech", "audio-capture", "network" → let onend restart
     };
 
     rec.onend = () => {
-      // Chrome stops recognition after pauses; restart if still listening
-      if (isListeningRef.current) {
-        try { rec.start(); } catch {}
-      }
+      recActiveRef.current = false;
+      if (!isListeningRef.current) return;
+      // Debounced restart to avoid tight loops on rapid end/start cycles
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = setTimeout(() => {
+        if (isListeningRef.current) safeStart();
+      }, RESTART_DEBOUNCE_MS);
     };
 
     recognitionRef.current = rec;
@@ -231,6 +284,8 @@ export default function App() {
     initSpeech();
     return () => {
       isListeningRef.current = false;
+      recActiveRef.current   = false;
+      clearTimeout(restartTimerRef.current);
       try { recognitionRef.current?.stop?.(); } catch {}
       if (abortRef.current) abortRef.current.abort();
       clearAdaptiveTimers();
@@ -240,13 +295,13 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Controls ────────────────────────────────────────────────────────
+  /* ── Controls ── */
   function startListening() {
     if (!recognitionRef.current) return;
     setFinalText("");
     setInterimText("");
-    bufferFinalRef.current   = "";
-    lastSentHashRef.current  = "";
+    bufferFinalRef.current  = "";
+    lastSentHashRef.current = "";
     clearAdaptiveTimers();
     setReply("");
     setLiveReply("");
@@ -254,29 +309,34 @@ export default function App() {
     setIsListening(true);
     isListeningRef.current = true;
     resetAutoStop();
-    try { recognitionRef.current.start(); } catch {}
+    safeStart();
   }
 
   function stopListening() {
     isListeningRef.current = false;
+    recActiveRef.current   = false;
     setIsListening(false);
     setStatus("idle");
     clearAdaptiveTimers();
     clearTimeout(autoStopTimerRef.current);
+    clearTimeout(restartTimerRef.current);
     const t = (bufferFinalRef.current || "").trim();
     bufferFinalRef.current = "";
     if (t) sendToBackend(t);
     try { recognitionRef.current?.stop?.(); } catch {}
   }
 
-  const transcriptToShow = useMemo(() => {
-    if (showLive) return [finalText, interimText].filter(Boolean).join(" ").trim();
-    return finalText;
-  }, [finalText, interimText, showLive]);
+  function clearTranscript() {
+    setFinalText("");
+    setInterimText("");
+    bufferFinalRef.current  = "";
+    lastSentHashRef.current = "";
+  }
 
+  /* finalText (confirmed) is always shown; interim only inside the drawer */
   const unsupported = status === "unsupported";
 
-  // ── Render ──────────────────────────────────────────────────────────
+  /* ── Render ── */
   return (
     <div className="appShell">
 
@@ -303,15 +363,6 @@ export default function App() {
           >
             🎧 Deep
           </button>
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={showLive}
-              onChange={(e) => setShowLive(e.target.checked)}
-            />
-            <span className="toggleTrack" />
-            <span className="toggleLabel">Live transcript</span>
-          </label>
         </div>
       </div>
 
@@ -323,16 +374,15 @@ export default function App() {
         <ChatBox systemPrompt={systemPrompt} setSystemPrompt={setSystemPrompt} />
       </div>
 
-      {/* ── Live transcript ── */}
-      <div className="card">
-        <div className="cardTitle">Live transcript</div>
-        <div className="transcriptBox">
-          {transcriptToShow || <span className="placeholder">Say something…</span>}
-        </div>
-        <div className="hint">
-          Adaptive: pauses send faster. Fallback gate: ~5s in proactive.
-        </div>
-      </div>
+      {/* ── Live transcript — collapsible drawer ── */}
+      <TranscriptPanel
+        transcript={finalText}
+        interimText={interimText}
+        isOpen={transcriptOpen}
+        onToggle={() => setTranscriptOpen((o) => !o)}
+        onClear={clearTranscript}
+        mode={mode}
+      />
 
       {/* ── Copilot suggestion ── */}
       <div className="card">
@@ -351,18 +401,16 @@ export default function App() {
             ⚠️ Speech recognition not supported in this browser.
           </span>
         ) : (
-          <>
-            <button
-              className={`btn${isListening ? " btnStop" : " btnStart"}`}
-              onClick={isListening ? stopListening : startListening}
-            >
-              {isListening ? "Stop" : "Start"}
-            </button>
-          </>
+          <button
+            className={`btn${isListening ? " btnStop" : " btnStart"}`}
+            onClick={isListening ? stopListening : startListening}
+          >
+            {isListening ? "Stop" : "Start"}
+          </button>
         )}
         <div className="meta">
           <span>aico.weomeo.win</span>
-          <span>Auto-stop: 2 minutes silence</span>
+          <span>Auto-stop: 2 min</span>
         </div>
       </div>
 
