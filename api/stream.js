@@ -21,11 +21,15 @@ function normalizeModelName(model) {
 }
 
 function buildSystemPrompt({ mode, userContext }) {
+  // ── Proactive: allow 2-3 sentences (up from 1-2), cap at 60 words.
+  // Removed "silent" framing so the model is more willing to engage.
+  // Added "be specific and actionable" to improve suggestion quality.
   const PROACTIVE_SYSTEM_BASE =
-    "You are a silent real-time AI copilot monitoring a live conversation. " +
-    "Offer ONE short, practical suggestion in 1–2 sentences (max 30 words). " +
-    "Only respond when you have something genuinely useful to add. " +
-    "If nothing is useful, return exactly an empty string — no filler, no acknowledgements. " +
+    "You are a real-time AI copilot monitoring a live conversation. " +
+    "Give 1-3 short, specific, actionable suggestions (max 60 words total). " +
+    "Focus on what would genuinely help right now — concrete talking points, " +
+    "missing context, or a better way to phrase something. " +
+    "If nothing useful comes to mind, return exactly an empty string. " +
     "Never repeat a previous suggestion. " +
     "Always respond in English.";
 
@@ -43,12 +47,12 @@ function buildSystemPrompt({ mode, userContext }) {
 
 function getGenParams({ mode }) {
   if (mode === "deep") return { temperature: 0.4, max_tokens: 320 };
-  return { temperature: 0.2, max_tokens: 96 };
+  // ↑ max_tokens 96 → 180: allows 2-3 sentences in proactive mode
+  return { temperature: 0.25, max_tokens: 180 };
 }
 
 /**
  * Sanitize and cap conversation history from the client.
- * Only allow valid user/assistant pairs, truncate content, cap total.
  */
 function sanitizeHistory(raw) {
   if (!Array.isArray(raw)) return [];
@@ -60,7 +64,7 @@ function sanitizeHistory(raw) {
         typeof m.content === "string" &&
         m.content.trim()
     )
-    .slice(-10) // hard server-side cap: max 10 messages
+    .slice(-10)
     .map((m) => ({
       role   : m.role,
       content: String(m.content).slice(0, 2000),
@@ -117,20 +121,12 @@ module.exports = async (req, res) => {
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("X-Accel-Buffering", "no");
 
-  // Build full message array: system + history + new user message
   const messages = [
     { role: "system", content: systemContent },
     ...history,
     { role: "user",   content: text },
   ];
 
-  // ── FIX: AbortController برای upstream fetch ────────────────────────────
-  // وقتی client disconnect می‌کنه (browser ابورت کرده یا tab بسته شده)،
-  // upstream fetch به xAI باید کنسل بشه تا:
-  //   1. API quota هدر نره
-  //   2. Vercel function زودتر آزاد بشه
-  // req.on('close') دقیقاً وقتی client disconnect می‌کنه fire می‌شه.
-  // ────────────────────────────────────────────────────────────────────────
   const upstreamAbort = new AbortController();
   req.on("close", () => upstreamAbort.abort());
 
@@ -149,12 +145,10 @@ module.exports = async (req, res) => {
     }),
     signal: upstreamAbort.signal,
   }).catch((err) => {
-    // AbortError یعنی client disconnect کرده — نیازی به log نیست
     if (err?.name !== "AbortError") console.error("Upstream fetch error:", err);
     return null;
   });
 
-  // اگه fetch ابورت شد یا fail کرد
   if (!upstream) {
     try { res.end(); } catch {}
     return;
@@ -186,7 +180,6 @@ module.exports = async (req, res) => {
         if (!payload) continue;
 
         if (payload === "[DONE]") {
-          // از یه flag استفاده می‌کنیم تا finally دوبار res.end نزنه
           res.end();
           return;
         }
@@ -201,10 +194,8 @@ module.exports = async (req, res) => {
       }
     }
   } catch {
-    // client disconnected یا upstream error — بی‌سروصدا exit می‌کنیم
+    // client disconnected or upstream error — exit silently
   } finally {
-    // اگه [DONE] دریافت شد و return زده شد، این finally هم اجرا می‌شه
-    // res.end() دوباره زده می‌شه ولی error رو catch می‌کنیم — بی‌خطره
     try { res.end(); } catch {}
   }
 };
