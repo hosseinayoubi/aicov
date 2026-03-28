@@ -20,18 +20,21 @@ function hashText(s) {
 }
 
 /* ── Tuning constants ─────────────────────────────────────────────────── */
-const SILENCE_MS         = 280;
-const FAST_FLUSH_WORDS   = 5;
-const GATE_MS            = { proactive: 1800, deep: 900 };
+// ↑ SILENCE_MS 280→380: gives SR more time to finalize → fewer cut-off words
+const SILENCE_MS       = 380;
+// ↑ FAST_FLUSH_WORDS 5→6: slightly less eager to avoid partial sentences
+const FAST_FLUSH_WORDS = 6;
+// ↓ GATE proactive 1800→1400: faster fallback send
+const GATE_MS          = { proactive: 1400, deep: 800 };
 
 const AUTO_STOP_MS        = 2 * 60 * 1000;
 const RESTART_DEBOUNCE_MS = 100;
 const MAX_HISTORY_TURNS   = 3;
 
-// VAD
+// VAD — ↑ VAD_SILENCE_MS 550→650ms: let audio settle before flushing
 const VAD_INTERVAL_MS = 50;
 const VAD_THRESHOLD   = 0.012;
-const VAD_SILENCE_MS  = 550;
+const VAD_SILENCE_MS  = 650;
 
 /* ─────────────────────────────────────────────────────────────────────── */
 
@@ -41,6 +44,8 @@ export default function App() {
   const [wsStatus,       setWsStatus]       = useState("connected");
   const [systemPrompt,   setSystemPrompt]   = useState("You are a proactive AI copilot.");
   const [mode,           setMode]           = useState("proactive");
+  // showLive: controls whether interim text is shown
+  // transcriptOpen: controls drawer open/close — fully independent from showLive
   const [showLive,       setShowLive]       = useState(true);
   const [transcriptOpen, setTranscriptOpen] = useState(true);
   const [finalText,      setFinalText]      = useState("");
@@ -58,25 +63,20 @@ export default function App() {
   const recognitionRef  = useRef(null);
   const recActiveRef    = useRef(false);
 
-  // ── Session counter (stale-event guard) ───────────────────────────────
-  // Each startListening increments sessionRef and creates a fresh rec that
-  // captures mySession = sessionRef.current. Late events from old recs are
-  // discarded by the "if (sessionRef.current !== mySession) return" check.
-  //
-  // KEY: onend does NOT increment sessionRef — it restarts the SAME rec
-  // within the current session, so mySession stays valid across Chrome's
-  // automatic stop/restart cycles.
-  // ──────────────────────────────────────────────────────────────────────
-  const sessionRef      = useRef(0);
+  // Session counter — stale-event guard.
+  // startListening increments it + builds fresh rec (captures new mySession).
+  // onend does NOT increment — it restarts same rec within session.
+  // stopListening increments — invalidates any pending onend restart.
+  const sessionRef = useRef(0);
 
-  const bufferFinalRef  = useRef("");
-  const lastSentHashRef = useRef("");
-
+  const bufferFinalRef   = useRef("");
+  const lastSentHashRef  = useRef("");
   const lastRequestIdRef = useRef("");
   const abortRef         = useRef(null);
 
-  const pendingTextRef  = useRef("");
-  const isReplyingRef   = useRef(false);
+  // Pending queue: speech heard while replying is queued, not dropped
+  const pendingTextRef = useRef("");
+  const isReplyingRef  = useRef(false);
 
   const historyRef = useRef([]);
 
@@ -97,7 +97,7 @@ export default function App() {
   const startListeningRef = useRef(null);
   const stopListeningRef  = useRef(null);
 
-  /* ── Sync refs with state ── */
+  /* ── Sync refs ── */
   useEffect(() => { isListeningRef.current  = isListening;  }, [isListening]);
   useEffect(() => { modeRef.current         = mode;         }, [mode]);
   useEffect(() => { systemPromptRef.current = systemPrompt; }, [systemPrompt]);
@@ -271,11 +271,11 @@ export default function App() {
       gateTimerRef.current = setTimeout(() => {
         gateTimerRef.current = null;
         flushBuffer();
-      }, GATE_MS[modeRef.current] ?? 1800);
+      }, GATE_MS[modeRef.current] ?? 1400);
     }
   }
 
-  /* ── VAD (Web Audio API) ── */
+  /* ── VAD ── */
   async function startVAD() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -347,11 +347,7 @@ export default function App() {
     }
   }
 
-  /* ── Build a fresh SpeechRecognition for the current session ── */
-  // Called on every startListening so mySession is always in sync with
-  // the current sessionRef value. This is the fix for the stale-session bug:
-  // the old single-init approach broke because sessionRef was incremented on
-  // stop/restart but mySession was only captured once at mount.
+  /* ── Build fresh SpeechRecognition per session ── */
   function buildRecognition() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setStatus("unsupported"); return false; }
@@ -365,7 +361,7 @@ export default function App() {
     rec.lang            = "en-US";
     rec.maxAlternatives = 1;
 
-    const mySession = sessionRef.current; // captured fresh each startListening
+    const mySession = sessionRef.current;
 
     rec.onstart = () => { recActiveRef.current = true; };
 
@@ -407,16 +403,12 @@ export default function App() {
         stopVAD();
         return;
       }
-      if (e.error === "audio-capture") {
-        console.warn("Audio capture conflict — will retry via onend");
-      }
     };
 
     rec.onend = () => {
       recActiveRef.current = false;
       if (!isListeningRef.current) return;
-      // Do NOT increment sessionRef here — this is a within-session restart.
-      // The same rec object is reused; mySession stays valid.
+      // Do NOT increment sessionRef — same rec, same session, within-session restart
       clearTimeout(restartTimerRef.current);
       restartTimerRef.current = setTimeout(() => {
         if (isListeningRef.current && sessionRef.current === mySession) {
@@ -429,7 +421,7 @@ export default function App() {
     return true;
   }
 
-  /* ── Mount: check support only ── */
+  /* ── Mount ── */
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) setStatus("unsupported");
@@ -451,10 +443,8 @@ export default function App() {
 
   /* ── Controls ── */
   async function startListening() {
-    // Increment session — invalidates any old rec's onresult
     sessionRef.current++;
 
-    // Full state reset
     setFinalText("");
     setInterimText("");
     bufferFinalRef.current  = "";
@@ -469,20 +459,15 @@ export default function App() {
     isListeningRef.current = true;
     resetAutoStop();
 
-    // Create fresh rec that captures current sessionRef
     const ok = buildRecognition();
     if (!ok) return;
 
-    // Stop old VAD interval first (prevents double-loop bug)
     stopVAD();
-    // Await VAD so its getUserMedia resolves BEFORE SR grabs the mic
-    // (prevents Chrome audio pipeline conflict)
     await startVAD();
     safeStart();
   }
 
   function stopListening() {
-    // Increment session — stops any in-progress onend restart
     sessionRef.current++;
 
     isListeningRef.current = false;
@@ -509,7 +494,7 @@ export default function App() {
     lastSentHashRef.current = "";
   }
 
-  /* ── Space key shortcut ── */
+  /* ── Space shortcut ── */
   startListeningRef.current = startListening;
   stopListeningRef.current  = stopListening;
 
@@ -555,15 +540,20 @@ export default function App() {
           >
             🎧 Deep
           </button>
+
+          {/* ── FIX: showLive toggle does NOT touch transcriptOpen.
+               These two states are fully independent.
+               showLive  → controls whether interim text is rendered.
+               transcriptOpen → controls drawer open/close, toggled only
+                               by clicking the transcript header.
+               Coupling them caused the UI jump: both states changed
+               simultaneously, collapsing the drawer instantly instead of
+               animating, which made the page content snap up/down. ── */}
           <label className="toggle">
             <input
               type="checkbox"
               checked={showLive}
-              onChange={(e) => {
-                const val = e.target.checked;
-                setShowLive(val);
-                setTranscriptOpen(val);
-              }}
+              onChange={(e) => setShowLive(e.target.checked)}
             />
             <span className="toggleTrack" />
             <span className="toggleLabel">Live transcript</span>
@@ -586,7 +576,7 @@ export default function App() {
         />
       </div>
 
-      {/* ── Live transcript — collapsible drawer ── */}
+      {/* ── Live transcript ── */}
       <TranscriptPanel
         transcript={finalText}
         interimText={showLive ? interimText : ""}
