@@ -20,23 +20,17 @@ function hashText(s) {
 }
 
 /* ── Tuning constants ─────────────────────────────────────────────────── */
-// ↑ SILENCE_MS 280→380: gives SR more time to finalize → fewer cut-off words
 const SILENCE_MS       = 380;
-// ↑ FAST_FLUSH_WORDS 5→6: slightly less eager to avoid partial sentences
 const FAST_FLUSH_WORDS = 6;
-// ↓ GATE proactive 1800→1400: faster fallback send
 const GATE_MS          = { proactive: 1400, deep: 800 };
 
 const AUTO_STOP_MS        = 2 * 60 * 1000;
 const RESTART_DEBOUNCE_MS = 100;
 const MAX_HISTORY_TURNS   = 3;
 
-// VAD — ↑ VAD_SILENCE_MS 550→650ms: let audio settle before flushing
 const VAD_INTERVAL_MS = 50;
 const VAD_THRESHOLD   = 0.012;
 const VAD_SILENCE_MS  = 650;
-
-/* ─────────────────────────────────────────────────────────────────────── */
 
 export default function App() {
   /* ── UI state ── */
@@ -44,15 +38,20 @@ export default function App() {
   const [wsStatus,       setWsStatus]       = useState("connected");
   const [systemPrompt,   setSystemPrompt]   = useState("You are a proactive AI copilot.");
   const [mode,           setMode]           = useState("proactive");
-  // showLive: controls whether interim text is shown
-  // transcriptOpen: controls drawer open/close — fully independent from showLive
+  // showLive and transcriptOpen are kept in sync — toggling the checkbox
+  // opens/closes the drawer. The drawer can also be toggled independently
+  // by clicking its header.
   const [showLive,       setShowLive]       = useState(true);
   const [transcriptOpen, setTranscriptOpen] = useState(true);
-  const [finalText,      setFinalText]      = useState("");
-  const [interimText,    setInterimText]    = useState("");
-  const [reply,          setReply]          = useState("");
-  const [liveReply,      setLiveReply]      = useState("");
-  const [isListening,    setIsListening]    = useState(false);
+  // transcriptAnimated prevents the CSS transition from firing on the
+  // initial render (which caused the layout to "jump" on first load).
+  const [transcriptAnimated, setTranscriptAnimated] = useState(false);
+
+  const [finalText,   setFinalText]   = useState("");
+  const [interimText, setInterimText] = useState("");
+  const [reply,       setReply]       = useState("");
+  const [liveReply,   setLiveReply]   = useState("");
+  const [isListening, setIsListening] = useState(false);
 
   /* ── Refs ── */
   const isListeningRef  = useRef(false);
@@ -60,25 +59,18 @@ export default function App() {
   const systemPromptRef = useRef("You are a proactive AI copilot.");
   const showLiveRef     = useRef(true);
 
-  const recognitionRef  = useRef(null);
-  const recActiveRef    = useRef(false);
-
-  // Session counter — stale-event guard.
-  // startListening increments it + builds fresh rec (captures new mySession).
-  // onend does NOT increment — it restarts same rec within session.
-  // stopListening increments — invalidates any pending onend restart.
-  const sessionRef = useRef(0);
+  const recognitionRef = useRef(null);
+  const recActiveRef   = useRef(false);
+  const sessionRef     = useRef(0);
 
   const bufferFinalRef   = useRef("");
   const lastSentHashRef  = useRef("");
   const lastRequestIdRef = useRef("");
   const abortRef         = useRef(null);
 
-  // Pending queue: speech heard while replying is queued, not dropped
   const pendingTextRef = useRef("");
   const isReplyingRef  = useRef(false);
-
-  const historyRef = useRef([]);
+  const historyRef     = useRef([]);
 
   const silenceTimerRef  = useRef(null);
   const gateTimerRef     = useRef(null);
@@ -86,7 +78,6 @@ export default function App() {
   const autoStopTimerRef = useRef(null);
   const restartTimerRef  = useRef(null);
 
-  // VAD
   const audioCtxRef       = useRef(null);
   const analyserRef       = useRef(null);
   const micStreamRef      = useRef(null);
@@ -102,6 +93,14 @@ export default function App() {
   useEffect(() => { modeRef.current         = mode;         }, [mode]);
   useEffect(() => { systemPromptRef.current = systemPrompt; }, [systemPrompt]);
   useEffect(() => { showLiveRef.current     = showLive;     }, [showLive]);
+
+  /* ── Enable transcript animation after first paint ── */
+  useEffect(() => {
+    // rAF ensures the initial render has painted before we allow transitions,
+    // which eliminates the layout jump on page load.
+    const id = requestAnimationFrame(() => setTranscriptAnimated(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   /* ── Timer helpers ── */
   function clearFlushTimers() {
@@ -233,29 +232,25 @@ export default function App() {
     }
   }
 
-  /* ── Flush buffer ── */
+  /* ── Flush ── */
   function flushBuffer() {
     const t = (bufferFinalRef.current || "").trim();
     if (!t) return;
     bufferFinalRef.current = "";
     vadFlushedRef.current  = true;
     clearFlushTimers();
-
     if (isReplyingRef.current) {
       pendingTextRef.current = (pendingTextRef.current + " " + t).trim();
       return;
     }
-
     sendToBackend(t);
   }
 
-  /* ── Adaptive flush scheduler ── */
   function scheduleFlush() {
     clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = null;
 
     const words = (bufferFinalRef.current || "").trim().split(/\s+/).filter(Boolean).length;
-
     if (words >= FAST_FLUSH_WORDS) {
       clearFlushTimers();
       flushBuffer();
@@ -335,7 +330,7 @@ export default function App() {
     analyserRef.current  = null;
   }
 
-  /* ── Safe SR start ── */
+  /* ── SR helpers ── */
   function safeStart() {
     if (!recognitionRef.current || recActiveRef.current) return;
     recActiveRef.current = true;
@@ -347,7 +342,6 @@ export default function App() {
     }
   }
 
-  /* ── Build fresh SpeechRecognition per session ── */
   function buildRecognition() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setStatus("unsupported"); return false; }
@@ -401,14 +395,12 @@ export default function App() {
         setIsListening(false);
         isListeningRef.current = false;
         stopVAD();
-        return;
       }
     };
 
     rec.onend = () => {
       recActiveRef.current = false;
       if (!isListeningRef.current) return;
-      // Do NOT increment sessionRef — same rec, same session, within-session restart
       clearTimeout(restartTimerRef.current);
       restartTimerRef.current = setTimeout(() => {
         if (isListeningRef.current && sessionRef.current === mySession) {
@@ -494,6 +486,14 @@ export default function App() {
     lastSentHashRef.current = "";
   }
 
+  function handleLiveToggle(val) {
+    setShowLive(val);
+    // Keep drawer in sync with toggle: turning off hides it, turning on shows it.
+    // This is safe now because transcriptAnimated=true at this point, so the
+    // drawer animates smoothly instead of snapping.
+    setTranscriptOpen(val);
+  }
+
   /* ── Space shortcut ── */
   startListeningRef.current = startListening;
   stopListeningRef.current  = stopListening;
@@ -532,7 +532,7 @@ export default function App() {
             className={`chip${mode === "proactive" ? " active" : ""}`}
             onClick={() => setMode("proactive")}
           >
-            ⚡ Proactive{mode === "proactive" ? " (adaptive)" : ""}
+            ⚡ Proactive
           </button>
           <button
             className={`chip${mode === "deep" ? " active" : ""}`}
@@ -540,20 +540,11 @@ export default function App() {
           >
             🎧 Deep
           </button>
-
-          {/* ── FIX: showLive toggle does NOT touch transcriptOpen.
-               These two states are fully independent.
-               showLive  → controls whether interim text is rendered.
-               transcriptOpen → controls drawer open/close, toggled only
-                               by clicking the transcript header.
-               Coupling them caused the UI jump: both states changed
-               simultaneously, collapsing the drawer instantly instead of
-               animating, which made the page content snap up/down. ── */}
           <label className="toggle">
             <input
               type="checkbox"
               checked={showLive}
-              onChange={(e) => setShowLive(e.target.checked)}
+              onChange={(e) => handleLiveToggle(e.target.checked)}
             />
             <span className="toggleTrack" />
             <span className="toggleLabel">Live transcript</span>
@@ -561,8 +552,22 @@ export default function App() {
         </div>
       </div>
 
-      {/* ── Status bar ── */}
-      <StatusBar status={status} wsStatus={wsStatus} mode={mode} />
+      {/* ── Status bar + Start/Stop action ── */}
+      <div className="statusRow">
+        <StatusBar status={status} wsStatus={wsStatus} mode={mode} />
+        {unsupported ? (
+          <span className="unsupportedNote">
+            ⚠️ Use Chrome or Edge
+          </span>
+        ) : (
+          <button
+            className={`actionBtn${isListening ? " actionBtnStop" : " actionBtnStart"}`}
+            onClick={isListening ? stopListening : startListening}
+          >
+            {isListening ? "Stop" : "Start"}
+          </button>
+        )}
+      </div>
 
       {/* ── Suggestion ── */}
       <div className="card">
@@ -576,11 +581,12 @@ export default function App() {
         />
       </div>
 
-      {/* ── Live transcript ── */}
+      {/* ── Live transcript — collapsible drawer ── */}
       <TranscriptPanel
         transcript={finalText}
         interimText={showLive ? interimText : ""}
         isOpen={transcriptOpen}
+        animated={transcriptAnimated}
         onToggle={() => setTranscriptOpen((o) => !o)}
         onClear={clearTranscript}
         mode={mode}
@@ -589,26 +595,6 @@ export default function App() {
       {/* ── Context / System Prompt ── */}
       <div className="card">
         <ChatBox systemPrompt={systemPrompt} setSystemPrompt={setSystemPrompt} />
-      </div>
-
-      {/* ── Fixed bottom bar ── */}
-      <div className="bottomBar">
-        {unsupported ? (
-          <span className="unsupportedNote">
-            ⚠️ Speech recognition not supported — use Chrome or Edge on desktop.
-          </span>
-        ) : (
-          <button
-            className={`btn${isListening ? " btnStop" : " btnStart"}`}
-            onClick={isListening ? stopListening : startListening}
-          >
-            {isListening ? "Stop" : "Start"}
-          </button>
-        )}
-        <div className="meta">
-          <span>aico.weomeo.win</span>
-          <span>Space to toggle · Auto-stop: 2 min</span>
-        </div>
       </div>
 
     </div>
