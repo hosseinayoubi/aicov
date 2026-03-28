@@ -19,35 +19,33 @@ function hashText(s) {
   return (h >>> 0).toString(16);
 }
 
-/* ── Platform detection ───────────────────────────────────────────────── */
+/* ── Platform ─────────────────────────────────────────────────────────── */
 const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(
   typeof navigator !== "undefined" ? navigator.userAgent : ""
 );
 
-/* ── Tuning constants ─────────────────────────────────────────────────── */
-// Accuracy > speed — give SR more time to finalize words before flushing.
-// Mobile needs even more time because the SR engine is slower and the OS
-// may need longer to settle between mic-stop and mic-start cycles.
-const SILENCE_MS       = IS_MOBILE ? 900  : 600;   // ms of silence → flush
-const FAST_FLUSH_WORDS = IS_MOBILE ? 10   : 8;     // immediate flush at N words
-const GATE_MS          = IS_MOBILE
-  ? { proactive: 3000, deep: 2000 }   // mobile: patience pays off
-  : { proactive: 2000, deep: 1200 };  // desktop: still comfortable
+/* ── Tuning ───────────────────────────────────────────────────────────── */
+// Prioritise accuracy over speed.
+// Mobile SR finalises words slower and is less reliable — give it much more room.
+const SILENCE_MS       = IS_MOBILE ? 1400 : 700;
+const FAST_FLUSH_WORDS = IS_MOBILE ? 14   : 9;
+const GATE_MS = IS_MOBILE
+  ? { proactive: 5000, deep: 4000 }
+  : { proactive: 2500, deep: 1500 };
 
 const AUTO_STOP_MS        = 2 * 60 * 1000;
-const RESTART_DEBOUNCE_MS = IS_MOBILE ? 600 : 120;  // OS mic-release time
+const RESTART_DEBOUNCE_MS = IS_MOBILE ? 700 : 120;
 const MAX_HISTORY_TURNS   = 3;
-const MAX_LOG_ENTRIES     = 6; // max conversation entries to keep visible
+const MAX_LOG_ENTRIES     = 8;
 
-// VAD — desktop only (mobile: double getUserMedia kills SR — see startVAD)
+// VAD — desktop only (see startVAD)
 const VAD_INTERVAL_MS = 50;
 const VAD_THRESHOLD   = 0.012;
-const VAD_SILENCE_MS  = 800;
+const VAD_SILENCE_MS  = 900;
 
 /* ─────────────────────────────────────────────────────────────────────── */
 
 export default function App() {
-  /* ── UI state ── */
   const [status,             setStatus]             = useState("idle");
   const [wsStatus,           setWsStatus]           = useState("connected");
   const [systemPrompt,       setSystemPrompt]       = useState("You are a proactive AI copilot.");
@@ -58,11 +56,7 @@ export default function App() {
   const [finalText,          setFinalText]          = useState("");
   const [interimText,        setInterimText]        = useState("");
   const [isListening,        setIsListening]        = useState(false);
-
-  // Conversation log: replaces single reply/liveReply.
-  // Entries persist for the whole session so the user can read them.
-  // Each entry: {id, question, answer, streaming, mode}
-  const [conversationLog, setConversationLog] = useState([]);
+  const [conversationLog,    setConversationLog]    = useState([]);
 
   /* ── Refs ── */
   const isListeningRef  = useRef(false);
@@ -74,14 +68,16 @@ export default function App() {
   const recActiveRef   = useRef(false);
   const sessionRef     = useRef(0);
 
-  // ── Duplicate-word guard ─────────────────────────────────────────────
-  // Chrome mobile (and occasionally desktop) re-delivers already-processed
-  // final results when recognition restarts internally with continuous=true.
-  // e.resultIndex should protect against this, but on mobile Chrome it
-  // sometimes resets to 0 after an internal restart.
-  // Fix: track the highest final result index we've already processed.
-  // In onresult, only process finals at index >= processedFinalCountRef.
-  const processedFinalCountRef = useRef(0);
+  // ── Cumulative-finals tracker ──────────────────────────────────────────
+  // Chrome (especially mobile) fires isFinal multiple times for overlapping
+  // portions of the same utterance, and can re-deliver all previous finals
+  // with resultIndex=0 after an internal restart.
+  //
+  // Fix: for each SR instance, we rebuild the COMPLETE finals text from
+  // e.results[0..N] every time. We keep committedTextRef as the portion
+  // already added to the buffer. Only the NEW suffix is processed.
+  // Reset on every buildRecognition call (new SR instance = clean slate).
+  const committedTextRef = useRef("");
 
   const bufferFinalRef   = useRef("");
   const lastSentHashRef  = useRef("");
@@ -105,7 +101,7 @@ export default function App() {
   const lastSpeechTimeRef = useRef(0);
   const vadFlushedRef     = useRef(false);
 
-  // Stable fn refs (used by effects + visibilitychange handler)
+  // Stable fn refs for effects and visibilitychange handler
   const startListeningRef   = useRef(null);
   const stopListeningRef    = useRef(null);
   const buildRecognitionRef = useRef(null);
@@ -117,7 +113,7 @@ export default function App() {
   useEffect(() => { systemPromptRef.current = systemPrompt; }, [systemPrompt]);
   useEffect(() => { showLiveRef.current     = showLive;     }, [showLive]);
 
-  /* ── Drawer animation: enable only after first paint ── */
+  /* ── Drawer animation: only after first paint (prevents initial jump) ── */
   useEffect(() => {
     const id = requestAnimationFrame(() => setTranscriptAnimated(true));
     return () => cancelAnimationFrame(id);
@@ -148,10 +144,9 @@ export default function App() {
   }
 
   /* ── Backend streaming ────────────────────────────────────────────────
-     Each call creates a NEW entry in conversationLog so answers accumulate
-     and stay visible. The user can read previous answers while new ones
-     stream in. No typewriter effect — text appears directly as it streams
-     so the user sees words as fast as the model produces them.
+     Each call appends a new entry to conversationLog. Entries accumulate
+     for the whole session — old answers stay visible and readable.
+     Text streams in directly (no typewriter delay).
   ── */
   async function sendToBackend(text) {
     const clean = String(text || "").trim();
@@ -166,13 +161,13 @@ export default function App() {
     abortRef.current = controller;
     const requestId  = makeId();
     lastRequestIdRef.current = requestId;
-    const entryMode = modeRef.current; // capture at call time
+    const entryMode  = modeRef.current;
 
     isReplyingRef.current = true;
     setStatus("thinking");
     setWsStatus("connected");
 
-    // Add a new streaming entry to the log (cap at MAX_LOG_ENTRIES)
+    // Append new streaming entry (keep last MAX_LOG_ENTRIES)
     setConversationLog(prev => [
       ...prev.slice(-(MAX_LOG_ENTRIES - 1)),
       { id: requestId, question: clean, answer: "", streaming: true, mode: entryMode },
@@ -185,9 +180,9 @@ export default function App() {
         method : "POST",
         headers: { "Content-Type": "application/json" },
         body   : JSON.stringify({
-          text   : clean,
-          system : systemPromptRef.current,
-          mode   : entryMode,
+          text  : clean,
+          system: systemPromptRef.current,
+          mode  : entryMode,
           history,
           requestId,
         }),
@@ -197,9 +192,10 @@ export default function App() {
       if (!res.ok || !res.body) {
         setWsStatus("error");
         setStatus("backend_error");
-        // Mark entry as failed
         setConversationLog(prev => prev.map(e =>
-          e.id === requestId ? { ...e, streaming: false, answer: e.answer || "⚠ Error" } : e
+          e.id === requestId
+            ? { ...e, streaming: false, answer: e.answer || "⚠ Error" }
+            : e
         ));
         return;
       }
@@ -216,7 +212,7 @@ export default function App() {
         if (!chunk) continue;
         if (lastRequestIdRef.current !== requestId) return;
         acc += chunk;
-        // Update the streaming entry in real time
+        // Update answer in real time
         setConversationLog(prev => prev.map(e =>
           e.id === requestId ? { ...e, answer: acc } : e
         ));
@@ -233,7 +229,7 @@ export default function App() {
         ];
       }
 
-      // Mark entry as complete (stops the streaming indicator)
+      // Mark entry complete
       setConversationLog(prev => prev.map(e =>
         e.id === requestId ? { ...e, answer: final, streaming: false } : e
       ));
@@ -293,16 +289,14 @@ export default function App() {
       gateTimerRef.current = setTimeout(() => {
         gateTimerRef.current = null;
         flushBuffer();
-      }, GATE_MS[modeRef.current] ?? 2000);
+      }, GATE_MS[modeRef.current] ?? 2500);
     }
   }
 
   /* ── VAD (desktop only) ───────────────────────────────────────────────
-     On mobile, VAD calls getUserMedia which conflicts with SpeechRecognition's
-     own internal getUserMedia. The mic is exclusive on mobile — whichever
-     grabs it first works, the other silently fails. Result: no audio captured.
-     On desktop both can share the stream without conflict.
-     Mobile uses timer-only flush (SILENCE_MS + GATE_MS above). ── */
+     On mobile, VAD calls getUserMedia which conflicts with SR's own
+     internal getUserMedia — the mic is exclusive so one silently fails.
+     Mobile uses timer-only flush (SILENCE_MS / GATE_MS above). ── */
   async function startVAD() {
     if (IS_MOBILE) return;
     try {
@@ -343,7 +337,8 @@ export default function App() {
           vadFlushedRef.current     = false;
         } else {
           const silMs = Date.now() - lastSpeechTimeRef.current;
-          if (silMs >= VAD_SILENCE_MS && !vadFlushedRef.current && (bufferFinalRef.current || "").trim()) {
+          if (silMs >= VAD_SILENCE_MS && !vadFlushedRef.current
+              && (bufferFinalRef.current || "").trim()) {
             flushBuffer();
           }
         }
@@ -382,16 +377,26 @@ export default function App() {
   }
 
   /* ── Build fresh SpeechRecognition ────────────────────────────────────
-     Called at every startListening. mySession = sessionRef.current at
-     creation time. Events from old (superseded) instances are discarded
-     by the "if (sessionRef.current !== mySession) return" guard.
+     Called on every startListening (and visibilitychange recovery).
+     mySession = sessionRef.current at creation — stale events discarded.
+
+     KEY FIX — Cumulative finals deduplication:
+     We rebuild allFinals from ALL e.results[0..N] on every onresult call.
+     committedTextRef tracks how many characters of that string we've
+     already added to the buffer. Only the NEW suffix is processed.
+
+     This eliminates duplicates regardless of how Chrome delivers finals:
+     - Repeated isFinal for overlapping text → no-op (nothing new beyond committed)
+     - Re-delivery after restart with resultIndex=0 → same, all already committed
+     - committedTextRef resets on buildRecognition → correct per-instance tracking
   ── */
   function buildRecognition() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setStatus("unsupported"); return false; }
 
     try { recognitionRef.current?.stop?.(); } catch {}
-    recActiveRef.current = false;
+    recActiveRef.current   = false;
+    committedTextRef.current = ""; // RESET for new SR instance
 
     const rec           = new SR();
     rec.continuous      = true;
@@ -406,42 +411,45 @@ export default function App() {
     rec.onresult = (e) => {
       if (sessionRef.current !== mySession) return;
 
-      let interim  = "";
-      let newFinal = "";
+      // ── Build complete finals text for this SR instance ──────────────
+      // Loop ALL results (0..length-1), not just from e.resultIndex.
+      // This way we always have the complete picture and can diff against
+      // what we've already committed.
+      let allFinals = "";
+      let lastInterim = "";
 
-      for (let i = e.resultIndex; i < e.results.length; i++) {
+      for (let i = 0; i < e.results.length; i++) {
         const r = e.results[i];
         const t = r?.[0]?.transcript || "";
-
         if (r.isFinal) {
-          // ── Duplicate-word guard ─────────────────────────────────────
-          // Skip any final result we've already processed. Chrome mobile
-          // sometimes resets resultIndex to 0 after an internal restart,
-          // re-delivering all previous finals. processedFinalCountRef
-          // tracks the highest processed index so we never double-count.
-          if (i < processedFinalCountRef.current) continue;
-          processedFinalCountRef.current = i + 1;
-          newFinal += " " + t;
+          allFinals += (allFinals ? " " : "") + t.trim();
         } else {
-          interim += " " + t;
+          // Take only the most recent interim (last non-final result)
+          lastInterim = t.trim();
         }
       }
 
-      const cleanFinal   = newFinal.trim();
-      const cleanInterim = interim.trim();
+      // ── Only process the truly NEW portion ──────────────────────────
+      if (allFinals.length > committedTextRef.current.length) {
+        const newChunk = allFinals
+          .slice(committedTextRef.current.length)
+          .trim();
+        committedTextRef.current = allFinals;
 
-      if (cleanFinal) {
-        setFinalText((prev) =>
-          (prev ? prev + " " + cleanFinal : cleanFinal).trim()
-        );
-        bufferFinalRef.current = (
-          bufferFinalRef.current + " " + cleanFinal
-        ).trim();
-        vadFlushedRef.current = false;
-        scheduleFlush();
-        resetAutoStop();
+        if (newChunk) {
+          setFinalText(prev =>
+            (prev ? prev + " " + newChunk : newChunk).trim()
+          );
+          bufferFinalRef.current = (
+            bufferFinalRef.current + " " + newChunk
+          ).trim();
+          vadFlushedRef.current = false;
+          scheduleFlush();
+          resetAutoStop();
+        }
       }
-      setInterimText(showLiveRef.current ? cleanInterim : "");
+
+      setInterimText(showLiveRef.current ? lastInterim : "");
     };
 
     rec.onerror = (e) => {
@@ -456,27 +464,28 @@ export default function App() {
         return;
       }
 
-      // audio-capture: mic busy. Some browsers don't fire onend after this.
-      // Schedule an explicit retry so we never get stuck.
+      // audio-capture: mic busy — some browsers skip onend after this
       if (e.error === "audio-capture") {
         clearTimeout(restartTimerRef.current);
         restartTimerRef.current = setTimeout(() => {
           if (isListeningRef.current && sessionRef.current === mySession) {
             safeStartRef.current?.();
           }
-        }, IS_MOBILE ? 1200 : 500);
+        }, IS_MOBILE ? 1500 : 600);
         return;
       }
-      // All other errors: onend will fire → normal restart path handles it.
+      // no-speech, network, aborted → onend fires → normal restart path
     };
 
     rec.onend = () => {
       recActiveRef.current = false;
       if (!isListeningRef.current) return;
-      // Do NOT increment sessionRef — within-session restart, mySession stays valid.
+      // Do NOT increment sessionRef — within-session restart, mySession valid
       clearTimeout(restartTimerRef.current);
       restartTimerRef.current = setTimeout(() => {
         if (isListeningRef.current && sessionRef.current === mySession) {
+          // Reset committedTextRef for the new micro-session that Chrome starts
+          committedTextRef.current = "";
           safeStartRef.current?.();
         }
       }, RESTART_DEBOUNCE_MS);
@@ -486,7 +495,7 @@ export default function App() {
     return true;
   }
 
-  /* ── Mount: check support + cleanup ── */
+  /* ── Mount ── */
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) setStatus("unsupported");
@@ -505,13 +514,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── Mobile: screen-lock / app-background recovery ───────────────────
-     When phone screen locks or user switches apps, SR stops. onend fires
-     and the normal restart loop runs — but on some mobile browsers,
-     start() silently fails while the screen is locked. When the user
-     returns, isListening is true but recActive is false and nothing works.
-     visibilitychange catches "coming back to foreground" and rebuilds SR.
-  ── */
+  /* ── Mobile: screen-lock / background recovery ───────────────────────
+     When user locks screen or switches apps, SR stops. On some mobile
+     browsers start() silently fails while locked. On return, isListening
+     is true but recActive is false — nothing works.
+     visibilitychange fires on "return to foreground" and rebuilds SR. ── */
   useEffect(() => {
     if (!IS_MOBILE) return;
 
@@ -522,12 +529,11 @@ export default function App() {
 
       clearTimeout(restartTimerRef.current);
       sessionRef.current++;
-      processedFinalCountRef.current = 0; // new SR instance = fresh counter
       const ok = buildRecognitionRef.current?.();
       if (ok) {
         restartTimerRef.current = setTimeout(() => {
           if (isListeningRef.current) safeStartRef.current?.();
-        }, 700);
+        }, 800);
       }
     }
 
@@ -539,11 +545,11 @@ export default function App() {
   /* ── Controls ── */
   async function startListening() {
     sessionRef.current++;
-    processedFinalCountRef.current = 0; // reset duplicate guard for new session
+    committedTextRef.current = "";
 
     setFinalText("");
     setInterimText("");
-    setConversationLog([]); // clear log for fresh session
+    setConversationLog([]);
     bufferFinalRef.current  = "";
     lastSentHashRef.current = "";
     pendingTextRef.current  = "";
@@ -585,8 +591,9 @@ export default function App() {
   function clearTranscript() {
     setFinalText("");
     setInterimText("");
-    bufferFinalRef.current  = "";
-    lastSentHashRef.current = "";
+    bufferFinalRef.current   = "";
+    lastSentHashRef.current  = "";
+    committedTextRef.current = "";
   }
 
   function handleLiveToggle(val) {
@@ -594,13 +601,13 @@ export default function App() {
     setTranscriptOpen(val);
   }
 
-  /* ── Keep stable refs current every render ── */
+  /* ── Keep stable refs current ── */
   startListeningRef.current   = startListening;
   stopListeningRef.current    = stopListening;
   buildRecognitionRef.current = buildRecognition;
   safeStartRef.current        = safeStart;
 
-  /* ── Space key shortcut (desktop) ── */
+  /* ── Space shortcut (desktop) ── */
   useEffect(() => {
     function onKeyDown(e) {
       if (e.code !== "Space") return;
@@ -616,7 +623,6 @@ export default function App() {
 
   const unsupported = status === "unsupported";
 
-  /* ── Render ── */
   return (
     <div className="appShell">
 
@@ -634,15 +640,11 @@ export default function App() {
           <button
             className={`chip${mode === "proactive" ? " active" : ""}`}
             onClick={() => setMode("proactive")}
-          >
-            ⚡ Proactive
-          </button>
+          >⚡ Proactive</button>
           <button
             className={`chip${mode === "deep" ? " active" : ""}`}
             onClick={() => setMode("deep")}
-          >
-            🎧 Deep
-          </button>
+          >🎧 Deep</button>
           <label className="toggle">
             <input
               type="checkbox"
@@ -655,11 +657,11 @@ export default function App() {
         </div>
       </div>
 
-      {/* ── Status bar + Start/Stop ── */}
+      {/* ── Status row ── */}
       <div className="statusRow">
         <StatusBar status={status} wsStatus={wsStatus} mode={mode} />
         {unsupported ? (
-          <span className="unsupportedNote">⚠️ Use Chrome (Android) or Safari (iOS)</span>
+          <span className="unsupportedNote">⚠️ Chrome (Android) or Safari (iOS)</span>
         ) : (
           <button
             className={`actionBtn${isListening ? " actionBtnStop" : " actionBtnStart"}`}
@@ -670,7 +672,7 @@ export default function App() {
         )}
       </div>
 
-      {/* ── Conversation Log ── */}
+      {/* ── Conversation log ── */}
       <div className="card">
         <ConversationLog
           log={conversationLog}
