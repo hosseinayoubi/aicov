@@ -2,16 +2,9 @@
    aico – Realtime Voice Copilot  |  Global Styles
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Reset / base ──────────────────────────────────────────────────────────── */
-*, *::before, *::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-html, body, #root {
-  height: 100%;
-}
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { height: 100%; }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
@@ -52,7 +45,6 @@ body {
   flex-shrink: 0;
 }
 
-/* Animated presence dot */
 .logoDot {
   width: 10px;
   height: 10px;
@@ -91,7 +83,6 @@ body {
   margin-top: 1px;
 }
 
-/* Controls: mode chips + toggle */
 .controlsRow {
   display: flex;
   align-items: center;
@@ -128,7 +119,7 @@ body {
   font-weight: 600;
 }
 
-/* ── Toggle ─────────────────────────────────────────────────────────────────── */
+/* ── Live transcript toggle ─────────────────────────────────────────────────── */
 .toggle {
   display: flex;
   align-items: center;
@@ -183,14 +174,13 @@ body {
   white-space: nowrap;
 }
 
-/* ── Status row: status bar + Start/Stop action ─────────────────────────────── */
+/* ── Status row ─────────────────────────────────────────────────────────────── */
 .statusRow {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-/* ── Status bar ─────────────────────────────────────────────────────────────── */
 .statusBar {
   flex: 1;
   display: flex;
@@ -211,9 +201,7 @@ body {
   font-weight: 600;
 }
 
-.statusSep {
-  color: rgba(255, 255, 255, 0.12);
-}
+.statusSep { color: rgba(255, 255, 255, 0.12); }
 
 .statusDot {
   width: 7px;
@@ -242,6 +230,8 @@ body {
   font-family: inherit;
   white-space: nowrap;
   transition: all 0.18s;
+  /* Minimum tap target on mobile */
+  min-height: 44px;
 }
 
 .actionBtnStart {
@@ -255,9 +245,7 @@ body {
   transform: translateY(-1px);
 }
 
-.actionBtnStart:active {
-  transform: translateY(0);
-}
+.actionBtnStart:active { transform: translateY(0); }
 
 .actionBtnStop {
   background: rgba(248, 113, 113, 0.1);
@@ -285,6 +273,169 @@ body {
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.3);
   margin-bottom: 10px;
+}
+
+/* ── Conversation Log ───────────────────────────────────────────────────────── */
+
+/* Empty / waiting state */
+.logEmpty {
+  font-size: 0.84rem;
+  color: rgba(255, 255, 255, 0.22);
+  font-style: italic;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.logEmpty b { color: rgba(255, 255, 255, 0.45); font-style: normal; }
+
+.logListening {
+  color: rgba(74, 222, 128, 0.6);
+  font-style: normal;
+}
+
+.logListeningDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 6px #4ade8088;
+  flex-shrink: 0;
+  animation: pulseDot 2s ease-in-out infinite;
+}
+
+/* List of entries */
+.logList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* Max height with scroll so the card doesn't grow unbounded */
+  max-height: 52vh;
+  overflow-y: auto;
+  /* Smooth scroll on mobile */
+  -webkit-overflow-scrolling: touch;
+  /* Subtle scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+
+.logList::-webkit-scrollbar { width: 4px; }
+.logList::-webkit-scrollbar-track { background: transparent; }
+.logList::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+/* Individual entry */
+.logEntry {
+  border-radius: 8px;
+  padding: 11px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  transition: opacity 0.3s, border-color 0.3s;
+}
+
+/* Active streaming entry — stands out with a blue left border */
+.logEntryActive {
+  border-color: rgba(96, 165, 250, 0.35);
+  background: rgba(96, 165, 250, 0.04);
+}
+
+/* Past (non-latest) entries — readable but visually receded */
+.logEntryPast {
+  opacity: 0.55;
+}
+
+/* Deep mode entry gets a purple accent instead of blue */
+.logEntryActive.logEntryDeep {
+  border-color: rgba(167, 139, 250, 0.4);
+  background: rgba(167, 139, 250, 0.04);
+}
+
+/* Entry header row: mode label + stream dot */
+.logEntryHeader {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 7px;
+}
+
+/* Mode label badge */
+.logLabel {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.logEntryActive .logLabel {
+  color: #93c5fd;
+}
+
+.logEntryActive.logEntryDeep .logLabel {
+  color: #c4b5fd;
+}
+
+/* Pulsing dot = streaming in progress */
+.logStreamDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #60a5fa;
+  box-shadow: 0 0 6px #60a5fa99;
+  animation: pulseDot 1.4s ease-in-out infinite;
+}
+
+.logEntryActive.logEntryDeep .logStreamDot {
+  background: #a78bfa;
+  box-shadow: 0 0 6px #a78bfa99;
+}
+
+/* The main answer text */
+.logAnswer {
+  font-size: 0.94rem;
+  line-height: 1.72;
+  color: rgba(255, 255, 255, 0.92);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.logEntryPast .logAnswer {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* Thinking dots (before answer arrives) */
+.logThinking {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  min-height: 22px;
+}
+
+/* Question / trigger snippet */
+.logQuestion {
+  margin-top: 8px;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.22);
+  line-height: 1.45;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 6px;
+  word-break: break-word;
+}
+
+/* ── Animated dots (shared) ─────────────────────────────────────────────────── */
+.dot {
+  animation: blink 1.4s infinite;
+  font-size: 1.1em;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.32);
+}
+.dot:nth-child(2) { animation-delay: 0.2s; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes blink {
+  0%, 80%, 100% { opacity: 0.2; }
+  40%           { opacity: 1;   }
 }
 
 /* ── ChatBox ────────────────────────────────────────────────────────────────── */
@@ -342,48 +493,6 @@ body {
   letter-spacing: 0.01em;
 }
 
-/* ── Suggestion text ────────────────────────────────────────────────────────── */
-.suggestionText {
-  font-size: 0.92rem;
-  line-height: 1.7;
-  color: rgba(255, 255, 255, 0.9);
-  word-break: break-word;
-}
-
-/* Idle placeholder */
-.suggestionIdle {
-  font-size: 0.82rem;
-  color: rgba(255, 255, 255, 0.18);
-  font-style: italic;
-  min-height: 26px;
-  display: flex;
-  align-items: center;
-}
-
-/* ── Listening / thinking dots ──────────────────────────────────────────────── */
-.listeningState {
-  font-size: 0.82rem;
-  color: rgba(255, 255, 255, 0.32);
-  font-style: italic;
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  min-height: 26px;
-}
-
-.dot {
-  animation: blink 1.4s infinite;
-  font-size: 1.1em;
-  line-height: 1;
-}
-.dot:nth-child(2) { animation-delay: 0.2s; }
-.dot:nth-child(3) { animation-delay: 0.4s; }
-
-@keyframes blink {
-  0%, 80%, 100% { opacity: 0.2; }
-  40%           { opacity: 1;   }
-}
-
 /* ── Unsupported note ───────────────────────────────────────────────────────── */
 .unsupportedNote {
   font-size: 0.74rem;
@@ -409,7 +518,15 @@ body {
 
   .actionBtn {
     width: 100%;
-    padding: 10px;
-    font-size: 0.88rem;
+    padding: 12px;
+    font-size: 0.9rem;
+  }
+
+  .logList {
+    max-height: 45vh;
+  }
+
+  .logAnswer {
+    font-size: 0.9rem;
   }
 }
