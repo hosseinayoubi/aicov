@@ -2,7 +2,7 @@
    aico – Realtime Voice Copilot  |  Global Styles
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Reset / base ─────────────────────────────────────────────────────────── */
+/* ── Reset / base ──────────────────────────────────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -24,36 +24,57 @@ body {
   min-height: 100vh;
 }
 
-/* ── App shell ────────────────────────────────────────────────────────────── */
+/* ── App shell ─────────────────────────────────────────────────────────────── */
 .appShell {
   display: flex;
   flex-direction: column;
+  gap: 14px;
   min-height: 100vh;
-  max-width: 720px;       /* single-column max width */
+  max-width: 720px;
   margin: 0 auto;
-  padding: 0 16px 48px;
+  padding: 0 16px 100px; /* bottom padding for fixed bottomBar */
 }
 
-/* ── Header ───────────────────────────────────────────────────────────────── */
-.appHeader {
+/* ── Header ────────────────────────────────────────────────────────────────── */
+.appTop {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 18px 0 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-  margin-bottom: 12px;
   gap: 12px;
   flex-wrap: wrap;
 }
 
-.headerBrand {
+/* Brand: animated dot + title */
+.brand {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   flex-shrink: 0;
 }
 
-.logo {
+.logoDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  flex-shrink: 0;
+  transition: background 0.35s, box-shadow 0.35s;
+}
+
+.logoDotActive {
+  background: #4ade80;
+  box-shadow: 0 0 10px #4ade8099;
+  animation: pulseDot 2.2s ease-in-out infinite;
+}
+
+@keyframes pulseDot {
+  0%, 100% { box-shadow: 0 0 0   0   rgba(74, 222, 128, 0.0); }
+  50%       { box-shadow: 0 0 12px 4px rgba(74, 222, 128, 0.3); }
+}
+
+.brandTitle {
   font-size: 1.4rem;
   font-weight: 700;
   letter-spacing: -0.03em;
@@ -61,108 +82,109 @@ body {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  line-height: 1.2;
 }
 
-.tagline {
-  font-size: 0.78rem;
-  color: rgba(255, 255, 255, 0.35);
+.brandSub {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.3);
   letter-spacing: 0.02em;
+  margin-top: 1px;
 }
 
-/* ── Header right side: mode toggle + mic button ─────────────────────────── */
-.headerControls {
+/* Controls row: chips + toggle */
+.controlsRow {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
-/* ── Mode toggle ──────────────────────────────────────────────────────────── */
-.modeToggle {
-  display: flex;
-  gap: 3px;
+/* ── Mode chips ─────────────────────────────────────────────────────────────── */
+.chip {
   background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  padding: 3px;
-}
-
-.modeBtn {
-  background: transparent;
-  border: none;
-  color: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  color: rgba(255, 255, 255, 0.45);
   cursor: pointer;
   font-size: 0.78rem;
   font-weight: 500;
-  letter-spacing: 0.03em;
-  padding: 5px 14px;
-  border-radius: 6px;
-  transition: background 0.15s, color 0.15s;
+  letter-spacing: 0.02em;
+  padding: 5px 13px;
   white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  font-family: inherit;
 }
 
-.modeBtn:hover {
-  color: rgba(255, 255, 255, 0.75);
-  background: rgba(255, 255, 255, 0.06);
+.chip:hover {
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
-.modeBtn.modeActive {
-  background: rgba(96, 165, 250, 0.18);
+.chip.active {
+  background: rgba(96, 165, 250, 0.16);
+  border-color: rgba(96, 165, 250, 0.4);
   color: #93c5fd;
   font-weight: 600;
 }
 
-/* ── Mic button (in header) ───────────────────────────────────────────────── */
-.micBtn {
+/* ── Toggle (live transcript) ───────────────────────────────────────────────── */
+.toggle {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 7px 16px;
-  border-radius: 8px;
-  border: 1px solid rgba(96, 165, 250, 0.3);
-  background: rgba(96, 165, 250, 0.08);
-  color: #93c5fd;
-  font-size: 0.82rem;
-  font-weight: 600;
   cursor: pointer;
-  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.toggle input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggleTrack {
+  width: 32px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.2s;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.toggleTrack::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 50%;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), background 0.2s;
+}
+
+.toggle input:checked ~ .toggleTrack {
+  background: rgba(96, 165, 250, 0.35);
+  border-color: rgba(96, 165, 250, 0.4);
+}
+
+.toggle input:checked ~ .toggleTrack::after {
+  transform: translateX(14px);
+  background: #60a5fa;
+}
+
+.toggleLabel {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.45);
   white-space: nowrap;
-  transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
 }
 
-.micBtn:hover:not(.micDisabled) {
-  background: rgba(96, 165, 250, 0.15);
-  border-color: rgba(96, 165, 250, 0.5);
-  box-shadow: 0 0 14px rgba(96, 165, 250, 0.12);
-}
-
-.micBtn.micActive {
-  background: rgba(248, 113, 113, 0.1);
-  border-color: rgba(248, 113, 113, 0.4);
-  color: #fca5a5;
-  animation: pulseRing 2s ease-in-out infinite;
-}
-
-.micBtn.micActive:hover {
-  background: rgba(248, 113, 113, 0.18);
-  border-color: rgba(248, 113, 113, 0.6);
-}
-
-.micBtn.micDisabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.micIcon {
-  font-size: 1rem;
-  line-height: 1;
-}
-
-@keyframes pulseRing {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.0); }
-  50%       { box-shadow: 0 0 0 5px rgba(248, 113, 113, 0.1); }
-}
-
-/* ── Status bar ───────────────────────────────────────────────────────────── */
+/* ── Status bar ─────────────────────────────────────────────────────────────── */
 .statusBar {
   display: flex;
   align-items: center;
@@ -173,7 +195,6 @@ body {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
-  margin-bottom: 16px;
   flex-wrap: wrap;
 }
 
@@ -200,14 +221,7 @@ body {
 .statusDot.blue   { background: #60a5fa; box-shadow: 0 0 6px #60a5fa88; }
 .statusDot.red    { background: #f87171; box-shadow: 0 0 6px #f8717188; }
 
-/* ── Single-column main stack ────────────────────────────────────────────── */
-.mainStack {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-/* ── Cards ────────────────────────────────────────────────────────────────── */
+/* ── Cards ──────────────────────────────────────────────────────────────────── */
 .card {
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -220,17 +234,17 @@ body {
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.32);
+  color: rgba(255, 255, 255, 0.3);
   margin-bottom: 10px;
 }
 
-/* ── ChatBox ──────────────────────────────────────────────────────────────── */
+/* ── ChatBox ────────────────────────────────────────────────────────────────── */
 .promptLabel {
   font-size: 0.7rem;
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.32);
+  color: rgba(255, 255, 255, 0.3);
   margin-bottom: 8px;
 }
 
@@ -258,19 +272,7 @@ body {
   border-color: rgba(96, 165, 250, 0.4);
 }
 
-/* ── Unsupported note ─────────────────────────────────────────────────────── */
-.unsupportedNote {
-  font-size: 0.76rem;
-  color: rgba(251, 191, 36, 0.75);
-  line-height: 1.5;
-  padding: 8px 12px;
-  background: rgba(251, 191, 36, 0.06);
-  border: 1px solid rgba(251, 191, 36, 0.14);
-  border-radius: 8px;
-  margin-top: 8px;
-}
-
-/* ── Transcript box ───────────────────────────────────────────────────────── */
+/* ── Transcript box ─────────────────────────────────────────────────────────── */
 .transcriptBox {
   font-size: 0.85rem;
   line-height: 1.65;
@@ -291,7 +293,7 @@ body {
   letter-spacing: 0.01em;
 }
 
-/* ── Suggestion text ──────────────────────────────────────────────────────── */
+/* ── Suggestion text ────────────────────────────────────────────────────────── */
 .suggestionText {
   font-size: 0.92rem;
   line-height: 1.7;
@@ -299,10 +301,20 @@ body {
   word-break: break-word;
 }
 
-/* ── Listening / thinking dots ────────────────────────────────────────────── */
+/* Idle placeholder inside suggestion card */
+.suggestionIdle {
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.18);
+  font-style: italic;
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+}
+
+/* ── Listening / thinking dots ──────────────────────────────────────────────── */
 .listeningState {
   font-size: 0.82rem;
-  color: rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.32);
   font-style: italic;
   display: flex;
   align-items: center;
@@ -321,4 +333,108 @@ body {
 @keyframes blink {
   0%, 80%, 100% { opacity: 0.2; }
   40%           { opacity: 1;   }
+}
+
+/* ── Unsupported note ───────────────────────────────────────────────────────── */
+.unsupportedNote {
+  font-size: 0.76rem;
+  color: rgba(251, 191, 36, 0.8);
+  line-height: 1.5;
+  padding: 8px 12px;
+  background: rgba(251, 191, 36, 0.06);
+  border: 1px solid rgba(251, 191, 36, 0.14);
+  border-radius: 8px;
+}
+
+/* ── Fixed bottom bar ───────────────────────────────────────────────────────── */
+.bottomBar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: rgba(11, 18, 32, 0.96);
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  z-index: 100;
+  gap: 12px;
+}
+
+/* Start / Stop buttons */
+.btn {
+  padding: 10px 32px;
+  border-radius: 10px;
+  border: none;
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.18s;
+}
+
+.btnStart {
+  background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35);
+}
+
+.btnStart:hover {
+  box-shadow: 0 4px 22px rgba(99, 102, 241, 0.55);
+  transform: translateY(-1px);
+}
+
+.btnStart:active {
+  transform: translateY(0);
+}
+
+.btnStop {
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #fca5a5;
+}
+
+.btnStop:hover {
+  background: rgba(248, 113, 113, 0.18);
+  border-color: rgba(248, 113, 113, 0.55);
+}
+
+/* Meta info (domain + auto-stop note) */
+.meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 0.67rem;
+  color: rgba(255, 255, 255, 0.2);
+  line-height: 1.5;
+  gap: 1px;
+}
+
+/* ── Responsive: narrow screens ─────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .appTop {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .controlsRow {
+    width: 100%;
+  }
+
+  .bottomBar {
+    padding: 10px 16px;
+  }
+
+  .btn {
+    padding: 9px 22px;
+    font-size: 0.84rem;
+  }
+
+  .meta {
+    display: none;
+  }
 }
