@@ -1,4 +1,3 @@
-import { useRef } from "react";
 import "./TranscriptPanel.css";
 
 export default function TranscriptPanel({
@@ -71,8 +70,8 @@ export default function TranscriptPanel({
             )}
           </div>
           <div className="hint">
-            Sends after 500 ms silence · Fast-flush at 8+ words ·{" "}
-            Gate: {mode === "proactive" ? "3 s" : "1.5 s"}
+            Sends after 280 ms silence · Fast-flush at 5+ words ·{" "}
+            Gate: {mode === "proactive" ? "1.8 s" : "0.9 s"}
           </div>
         </div>
       </div>
