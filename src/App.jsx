@@ -470,7 +470,12 @@ export default function App() {
             <input
               type="checkbox"
               checked={showLive}
-              onChange={(e) => setShowLive(e.target.checked)}
+              onChange={(e) => {
+                const val = e.target.checked;
+                setShowLive(val);
+                if (!val) setTranscriptOpen(false);
+                else setTranscriptOpen(true);
+              }}
             />
             <span className="toggleTrack" />
             <span className="toggleLabel">Live transcript</span>
