@@ -50,7 +50,7 @@
   line-height: 1;
   color: rgba(255, 255, 255, 0.4);
   transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity  0.2s ease;
+              color     0.2s ease;
   display: inline-block;
 }
 
@@ -77,10 +77,18 @@
   background: rgba(255, 255, 255, 0.1);
 }
 
-/* ── Collapse / Expand via grid-template-rows trick ── */
+/* ── Collapse / Expand ──
+   grid-template-rows trick animates height without knowing the content size.
+   IMPORTANT: the transition is only added via .drawerAnimated, which App.jsx
+   sets one rAF after mount. This prevents the initial "open" state from
+   triggering a transition on page load (which caused a layout jump). ── */
 .transcriptDrawer {
   display: grid;
   grid-template-rows: 0fr;
+}
+
+/* Transition enabled only after first paint */
+.transcriptDrawer.drawerAnimated {
   transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -88,11 +96,14 @@
   grid-template-rows: 1fr;
 }
 
-/* Inner wrapper – must have min-height:0 for the animation */
+/* Inner wrapper – min-height:0 is required for grid animation */
 .transcriptDrawerInner {
   min-height: 0;
   overflow: hidden;
   padding-top: 0;
+}
+
+.transcriptDrawer.drawerAnimated .transcriptDrawerInner {
   transition: padding-top 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -100,7 +111,7 @@
   padding-top: 10px;
 }
 
-/* Text colour split: final vs interim */
+/* Text colour split: confirmed vs interim */
 .finalText {
   color: inherit;
 }
