@@ -74,6 +74,10 @@ export default function App() {
   // Conversation history (in-memory, resets each session)
   const historyRef = useRef([]);
 
+  // Queue: speech heard while replying waits here instead of aborting the reply
+  const pendingTextRef = useRef("");
+  const isReplyingRef  = useRef(false);
+
   // Stable refs for Space shortcut
   const startListeningRef = useRef(null);
   const stopListeningRef  = useRef(null);
@@ -136,6 +140,7 @@ export default function App() {
     const requestId  = makeId();
     lastRequestIdRef.current = requestId;
 
+    isReplyingRef.current = true;
     setStatus("thinking");
     setWsStatus("connected");
     setReply("");
@@ -160,6 +165,7 @@ export default function App() {
       if (!res.ok || !res.body) {
         setWsStatus("error");
         setStatus("backend_error");
+        isReplyingRef.current = false;
         return;
       }
 
@@ -197,6 +203,16 @@ export default function App() {
       console.error("Fetch failed:", e);
       setWsStatus("error");
       setStatus("backend_error");
+    } finally {
+      isReplyingRef.current = false;
+
+      // If new speech arrived while we were replying, process it now.
+      // It already has full context because history was updated above.
+      const pending = pendingTextRef.current.trim();
+      pendingTextRef.current = "";
+      if (pending) {
+        sendToBackend(pending);
+      }
     }
   }
 
@@ -207,6 +223,14 @@ export default function App() {
     bufferFinalRef.current = "";
     vadFlushedRef.current  = true;
     clearAdaptiveTimers();
+
+    if (isReplyingRef.current) {
+      // Reply is still streaming — queue this input instead of aborting.
+      // Append so that if the interviewer keeps talking, we capture it all.
+      pendingTextRef.current = (pendingTextRef.current + " " + t).trim();
+      return;
+    }
+
     sendToBackend(t);
   }
 
@@ -225,7 +249,6 @@ export default function App() {
   }
 
   /* ── VAD (Web Audio API) ── */
-  // FIX: accepts an optional existing stream to avoid a second getUserMedia call
   async function startVAD(existingStream) {
     try {
       const stream = existingStream || await navigator.mediaDevices.getUserMedia({
@@ -275,7 +298,6 @@ export default function App() {
         }
       }, VAD_INTERVAL_MS);
     } catch (e) {
-      // Mic denied or API unavailable — gate fallback still works
       console.warn("VAD init failed:", e);
     }
   }
@@ -341,7 +363,6 @@ export default function App() {
       setInterimText(showLiveRef.current ? cleanInterim : "");
     };
 
-    // FIX: handle all error types, not just not-allowed
     rec.onerror = (e) => {
       console.warn("Speech error:", e.error);
       recActiveRef.current = false;
@@ -354,7 +375,6 @@ export default function App() {
         return;
       }
 
-      // audio-capture, network, aborted, etc. — let onend handle restart
       if (e.error === "audio-capture") {
         console.warn("Audio capture conflict — will retry via onend");
       }
@@ -388,16 +408,13 @@ export default function App() {
   }, []);
 
   /* ── Controls ── */
-
-  // FIX: async — VAD acquires the mic first, then SpeechRecognition starts.
-  // This prevents two simultaneous getUserMedia calls from conflicting and
-  // resetting Chrome's audio pipeline, which was silently killing transcription.
   async function startListening() {
     if (!recognitionRef.current) return;
     setFinalText("");
     setInterimText("");
     bufferFinalRef.current  = "";
     lastSentHashRef.current = "";
+    pendingTextRef.current  = "";
     historyRef.current      = [];
     clearAdaptiveTimers();
     setReply("");
@@ -406,9 +423,6 @@ export default function App() {
     setIsListening(true);
     isListeningRef.current = true;
     resetAutoStop();
-
-    // FIX: await VAD so its getUserMedia resolves before SR grabs the mic.
-    // Calling both simultaneously caused an audio pipeline conflict in Chrome.
     await startVAD();
     safeStart();
   }
@@ -423,6 +437,7 @@ export default function App() {
     clearTimeout(restartTimerRef.current);
     const t = (bufferFinalRef.current || "").trim();
     bufferFinalRef.current = "";
+    pendingTextRef.current = "";
     if (t) sendToBackend(t);
     stopVAD();
     try { recognitionRef.current?.stop?.(); } catch {}
