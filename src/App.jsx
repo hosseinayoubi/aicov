@@ -130,20 +130,22 @@ export default function App() {
     const clean = String(text || "").trim();
     if (!clean) return;
 
-    // ── FIX 2: hash deduplication ──────────────────────────────────────────
-    // hash فقط برای جلوگیری از دوبار ارسال همزمان چک می‌شه.
-    // بعد از هر reply موفق ریست می‌شه (پایین‌تر)، بنابراین
-    // کاربر می‌تونه همون جمله رو بعداً دوباره بپرسه.
+    // ── Hash deduplication ────────────────────────────────────────────────
+    // از ارسال دوباره‌ی همزمان همون جمله جلوگیری می‌کنه.
+    // hash بعد از هر request (موفق یا ناموفق) در finally ریست می‌شه،
+    // بنابراین کاربر همیشه می‌تونه همون جمله رو بعداً دوباره بپرسه.
     // ─────────────────────────────────────────────────────────────────────
     const h = hashText(clean);
     if (h === lastSentHashRef.current) return;
     lastSentHashRef.current = h;
 
+    // ── Abort هر request قبلی و شروع request جدید ────────────────────────
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     const requestId  = makeId();
     lastRequestIdRef.current = requestId;
+    // ─────────────────────────────────────────────────────────────────────
 
     isReplyingRef.current = true;
     setStatus("thinking");
@@ -168,9 +170,9 @@ export default function App() {
       });
 
       if (!res.ok || !res.body) {
+        // cleanup توسط finally با guard انجام می‌شه — فقط return کافیه
         setWsStatus("error");
         setStatus("backend_error");
-        // cleanup را به finally واگذار می‌کنیم — اینجا return کافیه
         return;
       }
 
@@ -184,14 +186,18 @@ export default function App() {
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
         if (!chunk) continue;
+
         // اگه این request دیگه active نیست، بی‌سروصدا خارج شو
+        // finally-اش guard دارد و هیچ cleanup انجام نمی‌ده (صحیح است)
         if (lastRequestIdRef.current !== requestId) return;
+
         acc += chunk;
         setLiveReply(acc);
       }
 
-      // یه چک آخر قبل از commit کردن نتیجه
+      // چک آخر قبل از commit کردن نتیجه
       if (lastRequestIdRef.current !== requestId) return;
+
       const final = String(acc || "").trim();
 
       if (final) {
@@ -204,37 +210,52 @@ export default function App() {
 
       setReply(final);
       startTypeReply(final);
-
-      // ── FIX 2: بعد از هر reply موفق hash رو reset کن ──────────────────
-      // این اجازه می‌ده کاربر همون جمله رو دوباره بپرسه و جواب بگیره.
-      lastSentHashRef.current = "";
-      // ─────────────────────────────────────────────────────────────────
-
       setStatus(isListeningRef.current ? "listening" : "idle");
 
     } catch (e) {
+      // AbortError یعنی یه request جدید شروع شده
+      // finally با guard اجرا می‌شه ولی چون requestId دیگه active نیست،
+      // guard رد می‌کنه و هیچ cleanup‌ای انجام نمی‌ده — صحیح است
       if (e?.name === "AbortError") return;
+
       console.error("Fetch failed:", e);
       setWsStatus("error");
       setStatus("backend_error");
+      // cleanup توسط finally با guard انجام می‌شه
 
     } finally {
-      // ── FIX 1: Race Condition Guard ────────────────────────────────────
-      // finally همیشه اجرا می‌شه — حتی برای requestهای ابورت‌شده.
-      // بدون این guard، request قدیمی می‌تونه isReplyingRef و pendingTextRef
-      // request جدید رو خراب کنه و جواب هرگز نرسه.
+      // ══════════════════════════════════════════════════════════════════
+      // FIX 1 — Race Condition Guard
+      // ──────────────────────────────────────────────────────────────────
+      // finally همیشه اجرا می‌شه — حتی وقتی:
+      //   • return از داخل try زده شده (AbortError، early exit)
+      //   • return از داخل catch زده شده
+      //   • خطا رخ داده
       //
-      // فقط اگه این request هنوز «active» هست cleanup انجام بده.
-      // ─────────────────────────────────────────────────────────────────
+      // بدون این guard، finally یه request قدیمی می‌تونه:
+      //   ❌ isReplyingRef یه request جدید رو false کنه
+      //   ❌ pendingTextRef رو بدزده و به اشتباه fire کنه
+      //   → نتیجه: app جواب نمی‌ده
+      //
+      // فقط وقتی این request هنوز «active» هست cleanup انجام بده.
+      // ══════════════════════════════════════════════════════════════════
       if (lastRequestIdRef.current === requestId) {
+
+        // FIX 2 — Hash Reset (success + error هر دو پوشش داده می‌شن)
+        // ──────────────────────────────────────────────────────────────
+        // قبلاً: hash فقط در success path ریست می‌شد
+        // مشکل: اگه request fail می‌شد، کاربر نمی‌تونست همون جمله رو
+        //        دوباره بگه — silent drop رخ می‌داد
+        // حالا: هم success و هم error باعث ریست hash می‌شن
+        // ──────────────────────────────────────────────────────────────
+        lastSentHashRef.current = "";
+
         isReplyingRef.current = false;
 
-        // اگه در حین reply حرف جدیدی شنیده شده، الان پردازش کن
+        // اگه در حین reply حرف جدیدی در queue بود، الان پردازش کن
         const pending = pendingTextRef.current.trim();
         pendingTextRef.current = "";
-        if (pending) {
-          sendToBackend(pending);
-        }
+        if (pending) sendToBackend(pending);
       }
     }
   }
@@ -446,12 +467,11 @@ export default function App() {
     isListeningRef.current = true;
     resetAutoStop();
 
-    // ── FIX 3: قبل از شروع VAD جدید، VAD قدیمی رو کامل متوقف کن ────────
-    // بدون این، اگه startListening دوباره صدا زده بشه، ممکنه کوتاه‌مدت
-    // دو تا VAD interval موازی داشته باشیم که race condition ایجاد می‌کنه.
+    // FIX 3 — VAD Double Interval
+    // اگه startListening دوباره صدا زده بشه در حالی که VAD فعاله،
+    // ممکنه کوتاه‌مدت دو تا interval موازی داشته باشیم.
+    // stopVAD قبل از startVAD این مشکل رو از ریشه حل می‌کنه.
     stopVAD();
-    // ─────────────────────────────────────────────────────────────────────
-
     await startVAD();
     safeStart();
   }
