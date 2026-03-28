@@ -24,12 +24,12 @@ const RESTART_DEBOUNCE_MS = 100;
 const WORD_FLUSH_THRESH   = 8;
 const LONG_GATE_PROACTIVE = 3_000;
 const LONG_GATE_DEEP      = 1_500;
-const MAX_HISTORY_TURNS   = 3;     // keep last 3 user/assistant pairs
+const MAX_HISTORY_TURNS   = 3;
 
 // VAD
 const VAD_INTERVAL_MS = 50;
-const VAD_THRESHOLD   = 0.012;  // RMS amplitude — raise if false-triggers on noise
-const VAD_SILENCE_MS  = 550;    // flush after this many ms of true silence
+const VAD_THRESHOLD   = 0.012;
+const VAD_SILENCE_MS  = 550;
 
 /* ────────────────────────────────────────────────────────────────────── */
 
@@ -225,9 +225,10 @@ export default function App() {
   }
 
   /* ── VAD (Web Audio API) ── */
-  async function startVAD() {
+  // FIX: accepts an optional existing stream to avoid a second getUserMedia call
+  async function startVAD(existingStream) {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const stream = existingStream || await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
         video: false,
       });
@@ -340,14 +341,22 @@ export default function App() {
       setInterimText(showLiveRef.current ? cleanInterim : "");
     };
 
+    // FIX: handle all error types, not just not-allowed
     rec.onerror = (e) => {
       console.warn("Speech error:", e.error);
       recActiveRef.current = false;
+
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         setStatus("unsupported");
         setIsListening(false);
         isListeningRef.current = false;
         stopVAD();
+        return;
+      }
+
+      // audio-capture, network, aborted, etc. — let onend handle restart
+      if (e.error === "audio-capture") {
+        console.warn("Audio capture conflict — will retry via onend");
       }
     };
 
@@ -370,7 +379,6 @@ export default function App() {
       recActiveRef.current   = false;
       clearTimeout(restartTimerRef.current);
       stopVAD();
-      try { recognitionRef.current?.stop?.(); } catch {}
       if (abortRef.current) abortRef.current.abort();
       clearAdaptiveTimers();
       clearInterval(typeTimerRef.current);
@@ -380,7 +388,11 @@ export default function App() {
   }, []);
 
   /* ── Controls ── */
-  function startListening() {
+
+  // FIX: async — VAD acquires the mic first, then SpeechRecognition starts.
+  // This prevents two simultaneous getUserMedia calls from conflicting and
+  // resetting Chrome's audio pipeline, which was silently killing transcription.
+  async function startListening() {
     if (!recognitionRef.current) return;
     setFinalText("");
     setInterimText("");
@@ -394,8 +406,11 @@ export default function App() {
     setIsListening(true);
     isListeningRef.current = true;
     resetAutoStop();
+
+    // FIX: await VAD so its getUserMedia resolves before SR grabs the mic.
+    // Calling both simultaneously caused an audio pipeline conflict in Chrome.
+    await startVAD();
     safeStart();
-    startVAD();
   }
 
   function stopListening() {
