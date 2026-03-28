@@ -1,8 +1,7 @@
-/* ═══════════════════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════════
    aico – Realtime Voice Copilot  |  Global Styles
-   ═══════════════════════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════════════ */
 
-/* ── Reset ─────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, #root { height: 100%; }
 
@@ -17,7 +16,7 @@ body {
   min-height: 100vh;
 }
 
-/* ── App shell ─────────────────────────────────────────────────────────────── */
+/* ── App shell ──────────────────────────────────────────────────────────── */
 .appShell {
   display: flex;
   flex-direction: column;
@@ -27,7 +26,7 @@ body {
   padding: 0 16px 40px;
 }
 
-/* ── Header ────────────────────────────────────────────────────────────────── */
+/* ── Header ─────────────────────────────────────────────────────────────── */
 .appTop {
   display: flex;
   align-items: center;
@@ -90,7 +89,7 @@ body {
   flex-wrap: wrap;
 }
 
-/* ── Mode chips ─────────────────────────────────────────────────────────────── */
+/* ── Mode chips ──────────────────────────────────────────────────────────── */
 .chip {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -101,6 +100,7 @@ body {
   font-weight: 500;
   letter-spacing: 0.02em;
   padding: 5px 13px;
+  min-height: 34px;
   white-space: nowrap;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
   font-family: inherit;
@@ -119,13 +119,14 @@ body {
   font-weight: 600;
 }
 
-/* ── Live transcript toggle ─────────────────────────────────────────────────── */
+/* ── Live transcript toggle ─────────────────────────────────────────────── */
 .toggle {
   display: flex;
   align-items: center;
   gap: 7px;
   cursor: pointer;
   user-select: none;
+  min-height: 34px;
 }
 
 .toggle input[type="checkbox"] {
@@ -174,7 +175,7 @@ body {
   white-space: nowrap;
 }
 
-/* ── Status row ─────────────────────────────────────────────────────────────── */
+/* ── Status row ─────────────────────────────────────────────────────────── */
 .statusRow {
   display: flex;
   align-items: center;
@@ -196,12 +197,8 @@ body {
   min-width: 0;
 }
 
-.statusBar b {
-  color: rgba(255, 255, 255, 0.72);
-  font-weight: 600;
-}
-
-.statusSep { color: rgba(255, 255, 255, 0.12); }
+.statusBar b { color: rgba(255, 255, 255, 0.72); font-weight: 600; }
+.statusSep   { color: rgba(255, 255, 255, 0.12); }
 
 .statusDot {
   width: 7px;
@@ -217,10 +214,10 @@ body {
 .statusDot.blue   { background: #60a5fa; box-shadow: 0 0 6px #60a5fa88; }
 .statusDot.red    { background: #f87171; box-shadow: 0 0 6px #f8717188; }
 
-/* ── Action button (Start / Stop) ───────────────────────────────────────────── */
+/* ── Action button (Start / Stop) ───────────────────────────────────────── */
 .actionBtn {
   flex-shrink: 0;
-  padding: 7px 26px;
+  padding: 8px 24px;
   border-radius: 8px;
   border: none;
   font-size: 0.84rem;
@@ -229,9 +226,9 @@ body {
   cursor: pointer;
   font-family: inherit;
   white-space: nowrap;
+  min-height: 44px;        /* comfortable tap target */
+  min-width: 80px;
   transition: all 0.18s;
-  /* Minimum tap target on mobile */
-  min-height: 44px;
 }
 
 .actionBtnStart {
@@ -240,11 +237,7 @@ body {
   box-shadow: 0 3px 14px rgba(99, 102, 241, 0.4);
 }
 
-.actionBtnStart:hover {
-  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.6);
-  transform: translateY(-1px);
-}
-
+.actionBtnStart:hover { box-shadow: 0 4px 20px rgba(99, 102, 241, 0.6); transform: translateY(-1px); }
 .actionBtnStart:active { transform: translateY(0); }
 
 .actionBtnStop {
@@ -258,7 +251,7 @@ body {
   border-color: rgba(248, 113, 113, 0.55);
 }
 
-/* ── Cards ──────────────────────────────────────────────────────────────────── */
+/* ── Cards ──────────────────────────────────────────────────────────────── */
 .card {
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -275,24 +268,22 @@ body {
   margin-bottom: 10px;
 }
 
-/* ── Conversation Log ───────────────────────────────────────────────────────── */
+/* ── Conversation Log ───────────────────────────────────────────────────── */
 
-/* Empty / waiting state */
 .logEmpty {
   font-size: 0.84rem;
   color: rgba(255, 255, 255, 0.22);
   font-style: italic;
-  min-height: 32px;
+  min-height: 34px;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 0;
 }
 
 .logEmpty b { color: rgba(255, 255, 255, 0.45); font-style: normal; }
 
 .logListening {
-  color: rgba(74, 222, 128, 0.6);
+  color: rgba(74, 222, 128, 0.65);
   font-style: normal;
 }
 
@@ -306,77 +297,70 @@ body {
   animation: pulseDot 2s ease-in-out infinite;
 }
 
-/* List of entries */
+/* Scrollable list */
 .logList {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  /* Max height with scroll so the card doesn't grow unbounded */
-  max-height: 52vh;
+  max-height: 55vh;
   overflow-y: auto;
-  /* Smooth scroll on mobile */
   -webkit-overflow-scrolling: touch;
-  /* Subtle scrollbar */
   scrollbar-width: thin;
   scrollbar-color: rgba(255,255,255,0.1) transparent;
 }
 
 .logList::-webkit-scrollbar { width: 4px; }
 .logList::-webkit-scrollbar-track { background: transparent; }
-.logList::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-
-/* Individual entry */
-.logEntry {
-  border-radius: 8px;
-  padding: 11px 13px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.02);
-  transition: opacity 0.3s, border-color 0.3s;
+.logList::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px;
 }
 
-/* Active streaming entry — stands out with a blue left border */
+/* Entry */
+.logEntry {
+  border-radius: 8px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  transition: opacity 0.4s;
+}
+
+/* Active streaming entry */
 .logEntryActive {
   border-color: rgba(96, 165, 250, 0.35);
   background: rgba(96, 165, 250, 0.04);
 }
 
-/* Past (non-latest) entries — readable but visually receded */
-.logEntryPast {
-  opacity: 0.55;
-}
-
-/* Deep mode entry gets a purple accent instead of blue */
 .logEntryActive.logEntryDeep {
   border-color: rgba(167, 139, 250, 0.4);
   background: rgba(167, 139, 250, 0.04);
 }
 
-/* Entry header row: mode label + stream dot */
+/* Past entries: visually receded but still readable */
+.logEntryPast {
+  opacity: 0.52;
+}
+
+/* Entry header */
 .logEntryHeader {
   display: flex;
   align-items: center;
   gap: 7px;
-  margin-bottom: 7px;
+  margin-bottom: 8px;
 }
 
-/* Mode label badge */
 .logLabel {
-  font-size: 0.66rem;
+  font-size: 0.65rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.25);
 }
 
-.logEntryActive .logLabel {
-  color: #93c5fd;
-}
+.logEntryActive.logEntryProactive .logLabel { color: #93c5fd; }
+.logEntryActive.logEntryDeep      .logLabel { color: #c4b5fd; }
 
-.logEntryActive.logEntryDeep .logLabel {
-  color: #c4b5fd;
-}
-
-/* Pulsing dot = streaming in progress */
+/* Streaming indicator dot */
 .logStreamDot {
   width: 6px;
   height: 6px;
@@ -391,20 +375,20 @@ body {
   box-shadow: 0 0 6px #a78bfa99;
 }
 
-/* The main answer text */
+/* Answer text */
 .logAnswer {
-  font-size: 0.94rem;
-  line-height: 1.72;
+  font-size: 0.95rem;
+  line-height: 1.75;
   color: rgba(255, 255, 255, 0.92);
   word-break: break-word;
   white-space: pre-wrap;
 }
 
 .logEntryPast .logAnswer {
-  color: rgba(255, 255, 255, 0.75);
+  color: rgba(255, 255, 255, 0.72);
 }
 
-/* Thinking dots (before answer arrives) */
+/* Thinking dots */
 .logThinking {
   display: flex;
   align-items: center;
@@ -412,18 +396,18 @@ body {
   min-height: 22px;
 }
 
-/* Question / trigger snippet */
+/* Trigger snippet */
 .logQuestion {
-  margin-top: 8px;
-  font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.22);
+  margin-top: 9px;
+  font-size: 0.71rem;
+  color: rgba(255, 255, 255, 0.2);
   line-height: 1.45;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
-  padding-top: 6px;
+  padding-top: 7px;
   word-break: break-word;
 }
 
-/* ── Animated dots (shared) ─────────────────────────────────────────────────── */
+/* ── Shared animated dots ───────────────────────────────────────────────── */
 .dot {
   animation: blink 1.4s infinite;
   font-size: 1.1em;
@@ -435,10 +419,10 @@ body {
 
 @keyframes blink {
   0%, 80%, 100% { opacity: 0.2; }
-  40%           { opacity: 1;   }
+  40%           { opacity: 1; }
 }
 
-/* ── ChatBox ────────────────────────────────────────────────────────────────── */
+/* ── ChatBox ────────────────────────────────────────────────────────────── */
 .promptLabel {
   font-size: 0.7rem;
   font-weight: 600;
@@ -463,16 +447,10 @@ body {
   transition: border-color 0.15s;
 }
 
-.promptTextarea::placeholder {
-  color: rgba(255, 255, 255, 0.2);
-  font-style: italic;
-}
+.promptTextarea::placeholder { color: rgba(255, 255, 255, 0.2); font-style: italic; }
+.promptTextarea:focus { border-color: rgba(96, 165, 250, 0.4); }
 
-.promptTextarea:focus {
-  border-color: rgba(96, 165, 250, 0.4);
-}
-
-/* ── Transcript box ─────────────────────────────────────────────────────────── */
+/* ── Transcript box ─────────────────────────────────────────────────────── */
 .transcriptBox {
   font-size: 0.85rem;
   line-height: 1.65;
@@ -481,10 +459,7 @@ body {
   word-break: break-word;
 }
 
-.placeholder {
-  color: rgba(255, 255, 255, 0.18);
-  font-style: italic;
-}
+.placeholder { color: rgba(255, 255, 255, 0.18); font-style: italic; }
 
 .hint {
   margin-top: 8px;
@@ -493,23 +468,21 @@ body {
   letter-spacing: 0.01em;
 }
 
-/* ── Unsupported note ───────────────────────────────────────────────────────── */
+/* ── Misc ───────────────────────────────────────────────────────────────── */
 .unsupportedNote {
   font-size: 0.74rem;
   color: rgba(251, 191, 36, 0.8);
   white-space: nowrap;
 }
 
-/* ── Responsive ─────────────────────────────────────────────────────────────── */
+/* ── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width: 520px) {
   .appTop {
     flex-direction: column;
     align-items: flex-start;
   }
 
-  .controlsRow {
-    width: 100%;
-  }
+  .controlsRow { width: 100%; }
 
   .statusRow {
     flex-direction: column;
@@ -518,15 +491,11 @@ body {
 
   .actionBtn {
     width: 100%;
-    padding: 12px;
-    font-size: 0.9rem;
+    padding: 13px;
+    font-size: 0.92rem;
   }
 
-  .logList {
-    max-height: 45vh;
-  }
+  .logList { max-height: 46vh; }
 
-  .logAnswer {
-    font-size: 0.9rem;
-  }
+  .logAnswer { font-size: 0.9rem; line-height: 1.7; }
 }
