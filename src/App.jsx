@@ -5,9 +5,9 @@ import SuggestionPanel from "./components/SuggestionPanel";
 import TranscriptPanel from "./components/TranscriptPanel";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const SILENCE_MS       = 500;
-const FAST_FLUSH_WORDS = 8;
-const GATE_MS          = { proactive: 3000, deep: 1500 };
+const SILENCE_MS       = 280;   // was 500 — faster flush after silence
+const FAST_FLUSH_WORDS = 5;     // was 8 — flush sooner
+const GATE_MS          = { proactive: 1800, deep: 900 }; // was 3000/1500
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -24,19 +24,22 @@ export default function App() {
   const [isListening,    setIsListening]    = useState(false);
   const [transcriptOpen, setTranscriptOpen] = useState(true);
 
-  // ── Mutable refs (avoid stale closures inside callbacks) ──────────────────
+  // ── Mutable refs ──────────────────────────────────────────────────────────
   const recRef          = useRef(null);
   const abortCtrlRef    = useRef(null);
   const silenceTimerRef = useRef(null);
   const gateTimerRef    = useRef(null);
-  const pendingRef      = useRef("");   // words accumulated since last flush
-  const lastSentRef     = useRef("");   // last text we actually sent to API
-  const historyRef      = useRef([]);   // conversation history (server cap = 10)
+  const pendingRef      = useRef("");
+  const lastSentRef     = useRef("");
+  const historyRef      = useRef([]);
   const isOnRef         = useRef(false);
   const modeRef         = useRef("proactive");
   const sysRef          = useRef("");
+  // Session counter — prevents stale onresult from old recognition instance
+  // firing after auto-restart (root cause of duplicate words)
+  const sessionRef      = useRef(0);
 
-  // ── Sync helpers (state + ref together) ──────────────────────────────────
+  // ── Sync helpers ──────────────────────────────────────────────────────────
   const setMode = (m) => { setModeState(m); modeRef.current = m; };
   const setSys  = (s) => { setSysState(s);  sysRef.current  = s; };
 
@@ -48,7 +51,7 @@ export default function App() {
     gateTimerRef.current    = null;
   }
 
-  // ── Flush: send pending text to /api/stream ───────────────────────────────
+  // ── Flush ─────────────────────────────────────────────────────────────────
   const flush = useCallback(async () => {
     const text = pendingRef.current.trim();
     if (!text || text === lastSentRef.current) return;
@@ -56,7 +59,6 @@ export default function App() {
     pendingRef.current  = "";
     lastSentRef.current = text;
 
-    // Cancel any in-flight request
     abortCtrlRef.current?.abort();
     const ctrl = new AbortController();
     abortCtrlRef.current = ctrl;
@@ -85,7 +87,6 @@ export default function App() {
       }
 
       if (!res.body) {
-        console.error("Response body is null");
         setStatus("backend_error");
         return;
       }
@@ -96,7 +97,6 @@ export default function App() {
       const decoder  = new TextDecoder();
       let   fullText = "";
 
-      // Read streaming plain-text chunks
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -105,61 +105,53 @@ export default function App() {
         setSuggestion(fullText);
       }
 
-      // Flush any remaining bytes in decoder
       const tail = decoder.decode();
-      if (tail) {
-        fullText += tail;
-        setSuggestion(fullText);
-      }
+      if (tail) { fullText += tail; setSuggestion(fullText); }
 
-      // Append to history (server-side caps at 10 messages anyway)
       const trimmed = fullText.trim();
       if (trimmed) {
         historyRef.current = [
           ...historyRef.current,
           { role: "user",      content: text    },
           { role: "assistant", content: trimmed },
-        ].slice(-20); // keep last 20 messages client-side
+        ].slice(-20);
       }
 
       setStatus(isOnRef.current ? "listening" : "idle");
     } catch (err) {
-      if (err?.name === "AbortError") return; // intentional cancel — no-op
+      if (err?.name === "AbortError") return;
       console.error("Fetch failed:", err);
       setStatus("backend_error");
     }
-  }, []); // no deps — reads everything via refs
+  }, []);
 
-  // ── Schedule flush with silence + gate timers ─────────────────────────────
+  // ── Schedule flush ────────────────────────────────────────────────────────
   function scheduleFlush() {
     clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = null;
 
     const words = pendingRef.current.trim().split(/\s+/).filter(Boolean).length;
 
-    // Fast-flush when enough words accumulated
     if (words >= FAST_FLUSH_WORDS) {
       clearTimers();
       flush();
       return;
     }
 
-    // Silence timer: flush after N ms of no new speech
     silenceTimerRef.current = setTimeout(() => {
       clearTimers();
       flush();
     }, SILENCE_MS);
 
-    // Gate timer: hard max wait before first flush in this utterance
     if (!gateTimerRef.current) {
       gateTimerRef.current = setTimeout(() => {
-        clearTimers();
+        gateTimerRef.current = null;
         flush();
-      }, GATE_MS[modeRef.current] ?? 3000);
+      }, GATE_MS[modeRef.current] ?? 1800);
     }
   }
 
-  // ── Build SpeechRecognition instance ─────────────────────────────────────
+  // ── Build SpeechRecognition ───────────────────────────────────────────────
   function buildRecognition() {
     if (!SR) return null;
 
@@ -169,6 +161,11 @@ export default function App() {
     rec.lang            = "en-US";
     rec.maxAlternatives = 1;
 
+    // Snapshot session ID at creation time.
+    // If recognition restarts, sessionRef increments and
+    // old onresult callbacks become no-ops — this kills duplicate words.
+    const mySession = ++sessionRef.current;
+
     rec.onstart = () => {
       setStatus("listening");
       setWsStatus("connected");
@@ -176,8 +173,8 @@ export default function App() {
     };
 
     rec.onend = () => {
-      // Auto-restart while user wants to keep listening
       if (isOnRef.current) {
+        sessionRef.current++;   // invalidate stale events from this instance
         try { rec.start(); } catch (_) {}
       } else {
         setStatus("idle");
@@ -187,7 +184,6 @@ export default function App() {
     };
 
     rec.onerror = (e) => {
-      // Benign errors — just silence or mic unavailable briefly
       if (e.error === "no-speech" || e.error === "audio-capture") return;
       console.warn("SpeechRecognition error:", e.error);
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
@@ -199,6 +195,9 @@ export default function App() {
     };
 
     rec.onresult = (e) => {
+      // Stale session guard — discard events from a dead instance
+      if (sessionRef.current !== mySession) return;
+
       let finalChunk = "";
       let interim    = "";
 
@@ -225,39 +224,29 @@ export default function App() {
     return rec;
   }
 
-  // ── Toggle listening on/off ───────────────────────────────────────────────
+  // ── Toggle listening ──────────────────────────────────────────────────────
   function toggleListening() {
-    if (!SR) {
-      setStatus("unsupported");
-      return;
-    }
+    if (!SR) { setStatus("unsupported"); return; }
 
     if (isOnRef.current) {
-      // ── STOP ──
       isOnRef.current = false;
       clearTimers();
       abortCtrlRef.current?.abort();
       pendingRef.current = "";
-
+      sessionRef.current++;
       try { recRef.current?.stop(); } catch (_) {}
       recRef.current = null;
-
       setIsListening(false);
       setInterimText("");
       setStatus("idle");
       setWsStatus("disconnected");
     } else {
-      // ── START ──
       isOnRef.current     = true;
       lastSentRef.current = "";
       setSuggestion("");
 
       const rec = buildRecognition();
-      if (!rec) {
-        isOnRef.current = false;
-        setStatus("unsupported");
-        return;
-      }
+      if (!rec) { isOnRef.current = false; setStatus("unsupported"); return; }
 
       recRef.current = rec;
       try { rec.start(); } catch (err) {
@@ -276,7 +265,6 @@ export default function App() {
     lastSentRef.current = "";
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
   const hasSupport = !!SR;
 
   return (
@@ -289,18 +277,30 @@ export default function App() {
           <span className="tagline">Realtime Voice Copilot</span>
         </div>
 
-        <div className="modeToggle">
+        <div className="headerControls">
+          <div className="modeToggle">
+            <button
+              className={`modeBtn${mode === "proactive" ? " modeActive" : ""}`}
+              onClick={() => setMode("proactive")}
+            >
+              Proactive
+            </button>
+            <button
+              className={`modeBtn${mode === "deep" ? " modeActive" : ""}`}
+              onClick={() => setMode("deep")}
+            >
+              Deep
+            </button>
+          </div>
+
           <button
-            className={`modeBtn${mode === "proactive" ? " modeActive" : ""}`}
-            onClick={() => setMode("proactive")}
+            className={`micBtn${isListening ? " micActive" : ""}${!hasSupport ? " micDisabled" : ""}`}
+            onClick={toggleListening}
+            disabled={!hasSupport}
+            title={!hasSupport ? "Speech Recognition not supported — use Chrome or Edge" : ""}
           >
-            Proactive
-          </button>
-          <button
-            className={`modeBtn${mode === "deep" ? " modeActive" : ""}`}
-            onClick={() => setMode("deep")}
-          >
-            Deep
+            <span className="micIcon">{isListening ? "⏹" : "🎙"}</span>
+            {isListening ? "Stop" : "Start Listening"}
           </button>
         </div>
       </header>
@@ -308,57 +308,44 @@ export default function App() {
       {/* ── Status bar ── */}
       <StatusBar status={status} wsStatus={wsStatus} mode={mode} />
 
-      {/* ── Main grid ── */}
-      <main className="mainGrid">
+      {/* ── Single column stack: Suggestion → Transcript → Context ── */}
+      <main className="mainStack">
 
-        {/* Left column */}
-        <div className="col">
-          <div className="card">
-            <ChatBox systemPrompt={systemPrompt} setSystemPrompt={setSys} />
+        {/* 1. Suggestion */}
+        <div className="card">
+          <div className="cardTitle">
+            {mode === "deep" ? "Answer" : "Suggestion"}
           </div>
-
-          <button
-            className={`micBtn${isListening ? " micActive" : ""}${!hasSupport ? " micDisabled" : ""}`}
-            onClick={toggleListening}
-            disabled={!hasSupport}
-            title={!hasSupport ? "Speech Recognition not supported — use Chrome or Edge on desktop" : ""}
-          >
-            <span className="micIcon">{isListening ? "⏹" : "🎙"}</span>
-            {isListening ? "Stop Listening" : "Start Listening"}
-          </button>
-
-          {!hasSupport && (
-            <p className="unsupportedNote">
-              ⚠ Speech Recognition is not supported in this browser.
-              Please use Chrome or Edge on desktop.
-            </p>
-          )}
-        </div>
-
-        {/* Right column */}
-        <div className="col">
-          <div className="card">
-            <div className="cardTitle">
-              {mode === "deep" ? "Answer" : "Suggestion"}
-            </div>
-            <SuggestionPanel
-              text={suggestion}
-              isListening={isListening}
-              status={status}
-            />
-          </div>
-
-          <TranscriptPanel
-            transcript={transcript}
-            interimText={interimText}
-            isOpen={transcriptOpen}
-            onToggle={() => setTranscriptOpen((v) => !v)}
-            onClear={clearTranscript}
-            mode={mode}
+          <SuggestionPanel
+            text={suggestion}
+            isListening={isListening}
+            status={status}
           />
         </div>
 
+        {/* 2. Live Transcript */}
+        <TranscriptPanel
+          transcript={transcript}
+          interimText={interimText}
+          isOpen={transcriptOpen}
+          onToggle={() => setTranscriptOpen((v) => !v)}
+          onClear={clearTranscript}
+          mode={mode}
+        />
+
+        {/* 3. Context / Prompt */}
+        <div className="card">
+          <ChatBox systemPrompt={systemPrompt} setSystemPrompt={setSys} />
+        </div>
+
       </main>
+
+      {!hasSupport && (
+        <p className="unsupportedNote">
+          ⚠ Speech Recognition is not supported in this browser.
+          Please use Chrome or Edge on desktop.
+        </p>
+      )}
     </div>
   );
 }
