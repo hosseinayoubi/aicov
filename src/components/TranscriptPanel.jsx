@@ -4,6 +4,7 @@ export default function TranscriptPanel({
   transcript,
   interimText,
   isOpen,
+  animated,
   onToggle,
   onClear,
   mode,
@@ -14,6 +15,7 @@ export default function TranscriptPanel({
 
   return (
     <div className="card transcriptCard">
+
       {/* ── Clickable header ── */}
       <div
         className="transcriptHeader"
@@ -38,24 +40,29 @@ export default function TranscriptPanel({
           {transcript && (
             <button
               className="clearBtn"
-              onClick={(e) => {
-                e.stopPropagation();
-                onClear();
-              }}
+              onClick={(e) => { e.stopPropagation(); onClear(); }}
               title="Clear transcript"
               tabIndex={-1}
             >
               ✕
             </button>
           )}
-          <span className={`transcriptChevron${isOpen ? " open" : ""}`}>
-            ▾
-          </span>
+          <span className={`transcriptChevron${isOpen ? " open" : ""}`}>▾</span>
         </div>
       </div>
 
-      {/* ── Animated drawer ── */}
-      <div className={`transcriptDrawer${isOpen ? " drawerOpen" : ""}`}>
+      {/* ── Animated drawer ──
+           The `animated` prop is false on the very first render (before the
+           first rAF in App.jsx fires). This prevents the CSS height
+           transition from running during initial paint, which caused a
+           visible layout jump at page load. After the first frame,
+           `animated` becomes true and all subsequent open/close actions
+           animate normally. ── */}
+      <div className={[
+        "transcriptDrawer",
+        isOpen     ? "drawerOpen" : "",
+        animated   ? "drawerAnimated" : "",
+      ].filter(Boolean).join(" ")}>
         <div className="transcriptDrawerInner">
           <div className="transcriptBox">
             {transcript ? (
@@ -70,11 +77,12 @@ export default function TranscriptPanel({
             )}
           </div>
           <div className="hint">
-            Sends after 280 ms silence · Fast-flush at 5+ words ·{" "}
-            Gate: {mode === "proactive" ? "1.8 s" : "0.9 s"}
+            Sends after 380 ms silence · Fast-flush at 6+ words ·{" "}
+            Gate: {mode === "proactive" ? "1.4 s" : "0.8 s"}
           </div>
         </div>
       </div>
+
     </div>
   );
 }
