@@ -124,6 +124,16 @@ module.exports = async (req, res) => {
     { role: "user",   content: text },
   ];
 
+  // ── FIX: AbortController برای upstream fetch ────────────────────────────
+  // وقتی client disconnect می‌کنه (browser ابورت کرده یا tab بسته شده)،
+  // upstream fetch به xAI باید کنسل بشه تا:
+  //   1. API quota هدر نره
+  //   2. Vercel function زودتر آزاد بشه
+  // req.on('close') دقیقاً وقتی client disconnect می‌کنه fire می‌شه.
+  // ────────────────────────────────────────────────────────────────────────
+  const upstreamAbort = new AbortController();
+  req.on("close", () => upstreamAbort.abort());
+
   const upstream = await fetch("https://api.x.ai/v1/chat/completions", {
     method : "POST",
     headers: {
@@ -137,7 +147,18 @@ module.exports = async (req, res) => {
       stream    : true,
       messages,
     }),
+    signal: upstreamAbort.signal,
+  }).catch((err) => {
+    // AbortError یعنی client disconnect کرده — نیازی به log نیست
+    if (err?.name !== "AbortError") console.error("Upstream fetch error:", err);
+    return null;
   });
+
+  // اگه fetch ابورت شد یا fail کرد
+  if (!upstream) {
+    try { res.end(); } catch {}
+    return;
+  }
 
   if (!upstream.ok || !upstream.body) {
     const errText = await upstream.text().catch(() => "");
@@ -163,7 +184,12 @@ module.exports = async (req, res) => {
         if (!trimmed.startsWith("data:")) continue;
         const payload = trimmed.slice(5).trim();
         if (!payload) continue;
-        if (payload === "[DONE]") { res.end(); return; }
+
+        if (payload === "[DONE]") {
+          // از یه flag استفاده می‌کنیم تا finally دوبار res.end نزنه
+          res.end();
+          return;
+        }
 
         try {
           const json  = JSON.parse(payload);
@@ -175,8 +201,10 @@ module.exports = async (req, res) => {
       }
     }
   } catch {
-    // client disconnected
+    // client disconnected یا upstream error — بی‌سروصدا exit می‌کنیم
   } finally {
+    // اگه [DONE] دریافت شد و return زده شد، این finally هم اجرا می‌شه
+    // res.end() دوباره زده می‌شه ولی error رو catch می‌کنیم — بی‌خطره
     try { res.end(); } catch {}
   }
 };
