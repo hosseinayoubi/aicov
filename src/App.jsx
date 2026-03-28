@@ -9,7 +9,6 @@ function makeId() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
 
-// FNV-1a hash — fast, stable dedupe key
 function hashText(s) {
   const str = String(s || "");
   let h = 2166136261;
@@ -21,19 +20,18 @@ function hashText(s) {
 }
 
 /* ── Tuning constants ─────────────────────────────────────────────────── */
-// From App.jsx (fastest, most responsive)
-const SILENCE_MS         = 280;   // ms of speech silence before flushing
-const FAST_FLUSH_WORDS   = 5;     // flush immediately at this many words
-const GATE_MS            = { proactive: 1800, deep: 900 }; // hard-max wait
+const SILENCE_MS         = 280;
+const FAST_FLUSH_WORDS   = 5;
+const GATE_MS            = { proactive: 1800, deep: 900 };
 
-const AUTO_STOP_MS        = 2 * 60 * 1000; // 2-minute auto-stop
-const RESTART_DEBOUNCE_MS = 100;            // gap before re-starting recognition
-const MAX_HISTORY_TURNS   = 3;              // conversation turns to keep
+const AUTO_STOP_MS        = 2 * 60 * 1000;
+const RESTART_DEBOUNCE_MS = 100;
+const MAX_HISTORY_TURNS   = 3;
 
-// VAD (Web Audio API — real silence detection, beats timer-only approach)
+// VAD
 const VAD_INTERVAL_MS = 50;
-const VAD_THRESHOLD   = 0.012; // RMS — raise if ambient noise triggers false flushes
-const VAD_SILENCE_MS  = 550;   // ms of audio silence before VAD fires
+const VAD_THRESHOLD   = 0.012;
+const VAD_SILENCE_MS  = 550;
 
 /* ─────────────────────────────────────────────────────────────────────── */
 
@@ -51,44 +49,44 @@ export default function App() {
   const [liveReply,      setLiveReply]      = useState("");
   const [isListening,    setIsListening]    = useState(false);
 
-  /* ── Refs — avoid stale closures in async / event handlers ── */
+  /* ── Refs ── */
   const isListeningRef  = useRef(false);
   const modeRef         = useRef("proactive");
   const systemPromptRef = useRef("You are a proactive AI copilot.");
   const showLiveRef     = useRef(true);
 
-  // Speech recognition
   const recognitionRef  = useRef(null);
   const recActiveRef    = useRef(false);
 
-  // ▶ Session counter — prevents stale onresult from a recycled SR instance
-  //   from firing duplicate words after auto-restart (from App.jsx)
+  // ── Session counter (stale-event guard) ───────────────────────────────
+  // Each startListening increments sessionRef and creates a fresh rec that
+  // captures mySession = sessionRef.current. Late events from old recs are
+  // discarded by the "if (sessionRef.current !== mySession) return" check.
+  //
+  // KEY: onend does NOT increment sessionRef — it restarts the SAME rec
+  // within the current session, so mySession stays valid across Chrome's
+  // automatic stop/restart cycles.
+  // ──────────────────────────────────────────────────────────────────────
   const sessionRef      = useRef(0);
 
-  // Text pipeline
   const bufferFinalRef  = useRef("");
   const lastSentHashRef = useRef("");
 
-  // Request tracking
   const lastRequestIdRef = useRef("");
   const abortRef         = useRef(null);
 
-  // Pending queue — speech heard WHILE replying waits here instead of
-  // aborting the in-flight reply (from App 2/3/4)
   const pendingTextRef  = useRef("");
   const isReplyingRef   = useRef(false);
 
-  // Conversation history (resets each session start)
   const historyRef = useRef([]);
 
-  // Timers
   const silenceTimerRef  = useRef(null);
   const gateTimerRef     = useRef(null);
   const typeTimerRef     = useRef(null);
   const autoStopTimerRef = useRef(null);
   const restartTimerRef  = useRef(null);
 
-  // VAD (Web Audio API)
+  // VAD
   const audioCtxRef       = useRef(null);
   const analyserRef       = useRef(null);
   const micStreamRef      = useRef(null);
@@ -96,7 +94,6 @@ export default function App() {
   const lastSpeechTimeRef = useRef(0);
   const vadFlushedRef     = useRef(false);
 
-  // Stable refs so Space-key handler always calls the latest fn
   const startListeningRef = useRef(null);
   const stopListeningRef  = useRef(null);
 
@@ -118,7 +115,6 @@ export default function App() {
     clearTimeout(autoStopTimerRef.current);
     autoStopTimerRef.current = setTimeout(() => {
       if (!isListeningRef.current) return;
-      // Inline stop avoids stale closure issues
       isListeningRef.current = false;
       recActiveRef.current   = false;
       setIsListening(false);
@@ -131,7 +127,7 @@ export default function App() {
     }, AUTO_STOP_MS);
   }
 
-  /* ── Typewriter effect ── */
+  /* ── Typewriter ── */
   function startTypeReply(text) {
     const words = String(text || "").split(/\s+/).filter(Boolean);
     let i = 0;
@@ -152,8 +148,6 @@ export default function App() {
     const clean = String(text || "").trim();
     if (!clean) return;
 
-    // Hash dedup: prevents double-sending the same burst.
-    // Cleared in finally so the user can repeat the same sentence later.
     const h = hashText(clean);
     if (h === lastSentHashRef.current) return;
     lastSentHashRef.current = h;
@@ -202,7 +196,6 @@ export default function App() {
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
         if (!chunk) continue;
-        // Stale request guard — a newer request has taken over
         if (lastRequestIdRef.current !== requestId) return;
         acc += chunk;
         setLiveReply(acc);
@@ -230,19 +223,9 @@ export default function App() {
       setStatus("backend_error");
 
     } finally {
-      // ── Race Condition Guard (from App 2/3) ──────────────────────────
-      // finally runs even for return'd / aborted requests.
-      // Without this guard an old request's finally would corrupt
-      // isReplyingRef and pendingTextRef that belong to the new request.
-      // Only clean up if THIS request is still the active one.
-      // ─────────────────────────────────────────────────────────────────
       if (lastRequestIdRef.current === requestId) {
-        // Reset hash in BOTH success and error paths so the user can
-        // repeat a sentence after a failed request (App 2 fix).
         lastSentHashRef.current = "";
         isReplyingRef.current   = false;
-
-        // If speech arrived while we were replying, process it now.
         const pending = pendingTextRef.current.trim();
         pendingTextRef.current = "";
         if (pending) sendToBackend(pending);
@@ -259,7 +242,6 @@ export default function App() {
     clearFlushTimers();
 
     if (isReplyingRef.current) {
-      // Reply still streaming — queue instead of aborting (App 2/3/4)
       pendingTextRef.current = (pendingTextRef.current + " " + t).trim();
       return;
     }
@@ -267,27 +249,24 @@ export default function App() {
     sendToBackend(t);
   }
 
-  /* ── Adaptive flush scheduler (from App.jsx — fastest timing) ── */
+  /* ── Adaptive flush scheduler ── */
   function scheduleFlush() {
     clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = null;
 
     const words = (bufferFinalRef.current || "").trim().split(/\s+/).filter(Boolean).length;
 
-    // Immediate flush if threshold reached
     if (words >= FAST_FLUSH_WORDS) {
       clearFlushTimers();
       flushBuffer();
       return;
     }
 
-    // Silence timer: flush after N ms of no new speech
     silenceTimerRef.current = setTimeout(() => {
       clearFlushTimers();
       flushBuffer();
     }, SILENCE_MS);
 
-    // Gate timer: hard-max wait, set only once per utterance
     if (!gateTimerRef.current) {
       gateTimerRef.current = setTimeout(() => {
         gateTimerRef.current = null;
@@ -297,12 +276,9 @@ export default function App() {
   }
 
   /* ── VAD (Web Audio API) ── */
-  // Accepts an optional existing stream to avoid a second getUserMedia call.
-  // Called with await so its mic grant resolves BEFORE SpeechRecognition
-  // grabs the mic — prevents Chrome audio pipeline conflict (App 5/6 fix).
-  async function startVAD(existingStream) {
+  async function startVAD() {
     try {
-      const stream = existingStream || await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
         video: false,
       });
@@ -339,18 +315,13 @@ export default function App() {
           vadFlushedRef.current     = false;
         } else {
           const silMs = Date.now() - lastSpeechTimeRef.current;
-          if (
-            silMs >= VAD_SILENCE_MS &&
-            !vadFlushedRef.current &&
-            (bufferFinalRef.current || "").trim()
-          ) {
+          if (silMs >= VAD_SILENCE_MS && !vadFlushedRef.current && (bufferFinalRef.current || "").trim()) {
             flushBuffer();
           }
         }
       }, VAD_INTERVAL_MS);
     } catch (e) {
-      // Mic denied or API unavailable — timer-based flush still works
-      console.warn("VAD init failed:", e);
+      console.warn("VAD init failed (timer flush still active):", e);
     }
   }
 
@@ -364,7 +335,7 @@ export default function App() {
     analyserRef.current  = null;
   }
 
-  /* ── Safe SR start (prevents double-start) ── */
+  /* ── Safe SR start ── */
   function safeStart() {
     if (!recognitionRef.current || recActiveRef.current) return;
     recActiveRef.current = true;
@@ -376,10 +347,17 @@ export default function App() {
     }
   }
 
-  /* ── Speech Recognition init ── */
-  function initSpeech() {
+  /* ── Build a fresh SpeechRecognition for the current session ── */
+  // Called on every startListening so mySession is always in sync with
+  // the current sessionRef value. This is the fix for the stale-session bug:
+  // the old single-init approach broke because sessionRef was incremented on
+  // stop/restart but mySession was only captured once at mount.
+  function buildRecognition() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { setStatus("unsupported"); return; }
+    if (!SR) { setStatus("unsupported"); return false; }
+
+    try { recognitionRef.current?.stop?.(); } catch {}
+    recActiveRef.current = false;
 
     const rec           = new SR();
     rec.continuous      = true;
@@ -387,13 +365,11 @@ export default function App() {
     rec.lang            = "en-US";
     rec.maxAlternatives = 1;
 
-    // Snapshot session at creation — stale-event guard (from App.jsx)
-    const mySession = ++sessionRef.current;
+    const mySession = sessionRef.current; // captured fresh each startListening
 
     rec.onstart = () => { recActiveRef.current = true; };
 
     rec.onresult = (e) => {
-      // Discard events from a recycled (dead) SR instance — kills duplicate words
       if (sessionRef.current !== mySession) return;
 
       let interim  = "";
@@ -424,7 +400,6 @@ export default function App() {
     rec.onerror = (e) => {
       console.warn("Speech error:", e.error);
       recActiveRef.current = false;
-
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         setStatus("unsupported");
         setIsListening(false);
@@ -432,7 +407,6 @@ export default function App() {
         stopVAD();
         return;
       }
-      // "no-speech", "audio-capture", "network" → onend will handle restart
       if (e.error === "audio-capture") {
         console.warn("Audio capture conflict — will retry via onend");
       }
@@ -441,19 +415,25 @@ export default function App() {
     rec.onend = () => {
       recActiveRef.current = false;
       if (!isListeningRef.current) return;
-      // Invalidate stale events from this instance before restarting (App.jsx)
-      sessionRef.current++;
+      // Do NOT increment sessionRef here — this is a within-session restart.
+      // The same rec object is reused; mySession stays valid.
       clearTimeout(restartTimerRef.current);
       restartTimerRef.current = setTimeout(() => {
-        if (isListeningRef.current) safeStart();
+        if (isListeningRef.current && sessionRef.current === mySession) {
+          safeStart();
+        }
       }, RESTART_DEBOUNCE_MS);
     };
 
     recognitionRef.current = rec;
+    return true;
   }
 
+  /* ── Mount: check support only ── */
   useEffect(() => {
-    initSpeech();
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) setStatus("unsupported");
+
     return () => {
       isListeningRef.current = false;
       recActiveRef.current   = false;
@@ -471,9 +451,10 @@ export default function App() {
 
   /* ── Controls ── */
   async function startListening() {
-    if (!recognitionRef.current) return;
+    // Increment session — invalidates any old rec's onresult
+    sessionRef.current++;
 
-    // Full reset
+    // Full state reset
     setFinalText("");
     setInterimText("");
     bufferFinalRef.current  = "";
@@ -488,25 +469,30 @@ export default function App() {
     isListeningRef.current = true;
     resetAutoStop();
 
-    // Stop any running VAD first to prevent double intervals (App 3 fix)
+    // Create fresh rec that captures current sessionRef
+    const ok = buildRecognition();
+    if (!ok) return;
+
+    // Stop old VAD interval first (prevents double-loop bug)
     stopVAD();
-    // Await VAD so its getUserMedia resolves BEFORE SR grabs the mic.
-    // Calling both simultaneously caused a Chrome audio pipeline conflict (App 5/6 fix).
+    // Await VAD so its getUserMedia resolves BEFORE SR grabs the mic
+    // (prevents Chrome audio pipeline conflict)
     await startVAD();
     safeStart();
   }
 
   function stopListening() {
+    // Increment session — stops any in-progress onend restart
+    sessionRef.current++;
+
     isListeningRef.current = false;
     recActiveRef.current   = false;
-    sessionRef.current++;
     setIsListening(false);
     setStatus("idle");
     clearFlushTimers();
     clearTimeout(autoStopTimerRef.current);
     clearTimeout(restartTimerRef.current);
 
-    // Flush remaining buffer one last time
     const t = (bufferFinalRef.current || "").trim();
     bufferFinalRef.current = "";
     pendingTextRef.current = "";
@@ -588,7 +574,7 @@ export default function App() {
       {/* ── Status bar ── */}
       <StatusBar status={status} wsStatus={wsStatus} mode={mode} />
 
-      {/* ── Suggestion (first — most important content) ── */}
+      {/* ── Suggestion ── */}
       <div className="card">
         <div className="cardTitle">
           {mode === "deep" ? "Answer" : "Suggestion"}
@@ -615,7 +601,7 @@ export default function App() {
         <ChatBox systemPrompt={systemPrompt} setSystemPrompt={setSystemPrompt} />
       </div>
 
-      {/* ── Footer / Start-Stop ── */}
+      {/* ── Fixed bottom bar ── */}
       <div className="bottomBar">
         {unsupported ? (
           <span className="unsupportedNote">
