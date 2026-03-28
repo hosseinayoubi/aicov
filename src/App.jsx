@@ -19,39 +19,46 @@ function hashText(s) {
   return (h >>> 0).toString(16);
 }
 
+/* ── Platform detection (module-level, stable) ────────────────────────── */
+const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(
+  typeof navigator !== "undefined" ? navigator.userAgent : ""
+);
+
 /* ── Tuning constants ─────────────────────────────────────────────────── */
-const SILENCE_MS       = 380;
+const SILENCE_MS       = IS_MOBILE ? 600 : 380;  // mobile SR finalises later
 const FAST_FLUSH_WORDS = 6;
 const GATE_MS          = { proactive: 1400, deep: 800 };
 
-const AUTO_STOP_MS        = 2 * 60 * 1000;
-const RESTART_DEBOUNCE_MS = 100;
-const MAX_HISTORY_TURNS   = 3;
+const AUTO_STOP_MS = 2 * 60 * 1000;
 
+// Mobile needs more time — OS must fully release the mic before SR can
+// grab it again. 100 ms on desktop is fine; 500 ms on mobile avoids the
+// "audio-capture" loop where rapid restarts keep failing.
+const RESTART_DEBOUNCE_MS = IS_MOBILE ? 500 : 100;
+
+const MAX_HISTORY_TURNS = 3;
+
+// VAD — desktop only (see startListening for explanation)
 const VAD_INTERVAL_MS = 50;
 const VAD_THRESHOLD   = 0.012;
 const VAD_SILENCE_MS  = 650;
 
+/* ─────────────────────────────────────────────────────────────────────── */
+
 export default function App() {
   /* ── UI state ── */
-  const [status,         setStatus]         = useState("idle");
-  const [wsStatus,       setWsStatus]       = useState("connected");
-  const [systemPrompt,   setSystemPrompt]   = useState("You are a proactive AI copilot.");
-  const [mode,           setMode]           = useState("proactive");
-  // showLive and transcriptOpen are kept in sync — toggling the checkbox
-  // opens/closes the drawer. The drawer can also be toggled independently
-  // by clicking its header.
-  const [showLive,       setShowLive]       = useState(true);
-  const [transcriptOpen, setTranscriptOpen] = useState(true);
-  // transcriptAnimated prevents the CSS transition from firing on the
-  // initial render (which caused the layout to "jump" on first load).
+  const [status,             setStatus]             = useState("idle");
+  const [wsStatus,           setWsStatus]           = useState("connected");
+  const [systemPrompt,       setSystemPrompt]       = useState("You are a proactive AI copilot.");
+  const [mode,               setMode]               = useState("proactive");
+  const [showLive,           setShowLive]           = useState(true);
+  const [transcriptOpen,     setTranscriptOpen]     = useState(true);
   const [transcriptAnimated, setTranscriptAnimated] = useState(false);
-
-  const [finalText,   setFinalText]   = useState("");
-  const [interimText, setInterimText] = useState("");
-  const [reply,       setReply]       = useState("");
-  const [liveReply,   setLiveReply]   = useState("");
-  const [isListening, setIsListening] = useState(false);
+  const [finalText,          setFinalText]          = useState("");
+  const [interimText,        setInterimText]        = useState("");
+  const [reply,              setReply]              = useState("");
+  const [liveReply,          setLiveReply]          = useState("");
+  const [isListening,        setIsListening]        = useState(false);
 
   /* ── Refs ── */
   const isListeningRef  = useRef(false);
@@ -61,7 +68,11 @@ export default function App() {
 
   const recognitionRef = useRef(null);
   const recActiveRef   = useRef(false);
-  const sessionRef     = useRef(0);
+
+  // Session counter — stale-event guard.
+  // Incremented on startListening and stopListening.
+  // NOT incremented in onend — same rec, same session, within-session restart.
+  const sessionRef = useRef(0);
 
   const bufferFinalRef   = useRef("");
   const lastSentHashRef  = useRef("");
@@ -78,6 +89,7 @@ export default function App() {
   const autoStopTimerRef = useRef(null);
   const restartTimerRef  = useRef(null);
 
+  // VAD (desktop only)
   const audioCtxRef       = useRef(null);
   const analyserRef       = useRef(null);
   const micStreamRef      = useRef(null);
@@ -85,19 +97,24 @@ export default function App() {
   const lastSpeechTimeRef = useRef(0);
   const vadFlushedRef     = useRef(false);
 
-  const startListeningRef = useRef(null);
-  const stopListeningRef  = useRef(null);
+  // Stable refs so effects always call the latest version of these functions
+  const startListeningRef   = useRef(null);
+  const stopListeningRef    = useRef(null);
+  const buildRecognitionRef = useRef(null);
+  const safeStartRef        = useRef(null);
 
-  /* ── Sync refs ── */
+  /* ── Sync refs with state ── */
   useEffect(() => { isListeningRef.current  = isListening;  }, [isListening]);
   useEffect(() => { modeRef.current         = mode;         }, [mode]);
   useEffect(() => { systemPromptRef.current = systemPrompt; }, [systemPrompt]);
   useEffect(() => { showLiveRef.current     = showLive;     }, [showLive]);
 
-  /* ── Enable transcript animation after first paint ── */
+  /* ── Enable drawer transition after first paint ────────────────────────
+     Without this, the CSS grid-template-rows transition fires on mount and
+     causes a visible layout shift (the drawer "opens" from 0 to full height
+     even though it starts open). One rAF is enough to let React finish its
+     first paint before we enable the transition class. ── */
   useEffect(() => {
-    // rAF ensures the initial render has painted before we allow transitions,
-    // which eliminates the layout jump on page load.
     const id = requestAnimationFrame(() => setTranscriptAnimated(true));
     return () => cancelAnimationFrame(id);
   }, []);
@@ -232,7 +249,7 @@ export default function App() {
     }
   }
 
-  /* ── Flush ── */
+  /* ── Buffer flush ── */
   function flushBuffer() {
     const t = (bufferFinalRef.current || "").trim();
     if (!t) return;
@@ -270,8 +287,21 @@ export default function App() {
     }
   }
 
-  /* ── VAD ── */
+  /* ── VAD (desktop only) ───────────────────────────────────────────────
+     VAD calls getUserMedia to watch RMS amplitude in real time, which lets
+     us flush the speech buffer the moment the user stops talking — much
+     faster than a timer alone.
+
+     WHY DESKTOP ONLY:
+     On mobile (Android Chrome, iOS Safari), SpeechRecognition also
+     internally calls getUserMedia. When VAD already holds a media stream,
+     the browser's mic-access layer is busy. On Android Chrome the SR's
+     internal getUserMedia fails silently → no audio is ever captured.
+     On iOS it throws "audio-capture". The timer-based flush (scheduleFlush)
+     is sufficient on mobile; it still sends within GATE_MS.
+  ── */
   async function startVAD() {
+    if (IS_MOBILE) return; // see explanation above
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
@@ -330,7 +360,7 @@ export default function App() {
     analyserRef.current  = null;
   }
 
-  /* ── SR helpers ── */
+  /* ── Safe SR start ── */
   function safeStart() {
     if (!recognitionRef.current || recActiveRef.current) return;
     recActiveRef.current = true;
@@ -339,9 +369,20 @@ export default function App() {
     } catch (e) {
       recActiveRef.current = false;
       console.warn("rec.start() error:", e);
+      // If start() threw, schedule a retry on mobile
+      if (IS_MOBILE && isListeningRef.current) {
+        clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = setTimeout(() => {
+          if (isListeningRef.current) safeStartRef.current?.();
+        }, RESTART_DEBOUNCE_MS);
+      }
     }
   }
 
+  /* ── Build fresh SpeechRecognition per session ─────────────────────────
+     Called at the start of every listen session (not at mount) so that
+     mySession is always == sessionRef.current, preventing the stale-event
+     bug where old onresult callbacks fire after a restart. ── */
   function buildRecognition() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setStatus("unsupported"); return false; }
@@ -355,11 +396,12 @@ export default function App() {
     rec.lang            = "en-US";
     rec.maxAlternatives = 1;
 
-    const mySession = sessionRef.current;
+    const mySession = sessionRef.current; // captured fresh per session
 
     rec.onstart = () => { recActiveRef.current = true; };
 
     rec.onresult = (e) => {
+      // Discard results from superseded sessions
       if (sessionRef.current !== mySession) return;
 
       let interim  = "";
@@ -390,21 +432,41 @@ export default function App() {
     rec.onerror = (e) => {
       console.warn("Speech error:", e.error);
       recActiveRef.current = false;
+
+      // Permission denied — hard stop, no retry
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         setStatus("unsupported");
         setIsListening(false);
         isListeningRef.current = false;
         stopVAD();
+        return;
       }
+
+      // audio-capture: mic busy (most common on mobile after a restart).
+      // Some browsers DO fire onend after this; some don't. Schedule an
+      // explicit retry so we never get stuck if onend doesn't arrive.
+      if (e.error === "audio-capture") {
+        clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = setTimeout(() => {
+          if (isListeningRef.current && sessionRef.current === mySession) {
+            safeStartRef.current?.();
+          }
+        }, IS_MOBILE ? 1000 : 400);
+        return;
+      }
+
+      // All other errors (no-speech, network, aborted):
+      // onend will fire and the normal restart path handles it.
     };
 
     rec.onend = () => {
       recActiveRef.current = false;
       if (!isListeningRef.current) return;
+      // Do NOT increment sessionRef — this is a within-session restart.
       clearTimeout(restartTimerRef.current);
       restartTimerRef.current = setTimeout(() => {
         if (isListeningRef.current && sessionRef.current === mySession) {
-          safeStart();
+          safeStartRef.current?.();
         }
       }, RESTART_DEBOUNCE_MS);
     };
@@ -413,7 +475,7 @@ export default function App() {
     return true;
   }
 
-  /* ── Mount ── */
+  /* ── Mount: check support + cleanup ── */
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) setStatus("unsupported");
@@ -430,6 +492,41 @@ export default function App() {
       clearTimeout(autoStopTimerRef.current);
       try { recognitionRef.current?.stop?.(); } catch {}
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ── Mobile: handle screen lock / app background ────────────────────────
+     When the user locks their phone or switches apps, SpeechRecognition
+     stops (onend fires) and the normal restart runs. BUT on some mobile
+     browsers start() silently fails while the screen is locked, so when
+     the user returns, recActiveRef is still false even though
+     isListeningRef is true.
+
+     visibilitychange catches the "coming back to foreground" moment and
+     rebuilds the recognition from scratch to guarantee a clean state.
+  ── */
+  useEffect(() => {
+    if (!IS_MOBILE) return;
+
+    function onVisible() {
+      if (document.hidden) return;              // fired on hide, not show
+      if (!isListeningRef.current) return;       // user already stopped
+      if (recActiveRef.current) return;          // SR is fine, nothing to do
+
+      // Screen was unlocked / app returned to foreground.
+      // Rebuild recognition (new session) then start.
+      clearTimeout(restartTimerRef.current);
+      sessionRef.current++;
+      const ok = buildRecognitionRef.current?.();
+      if (ok) {
+        restartTimerRef.current = setTimeout(() => {
+          if (isListeningRef.current) safeStartRef.current?.();
+        }, 600);
+      }
+    }
+
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -454,8 +551,11 @@ export default function App() {
     const ok = buildRecognition();
     if (!ok) return;
 
+    // Desktop only: VAD for real-time amplitude-based silence detection.
+    // On mobile this is skipped — see startVAD() for detailed explanation.
     stopVAD();
     await startVAD();
+
     safeStart();
   }
 
@@ -488,16 +588,16 @@ export default function App() {
 
   function handleLiveToggle(val) {
     setShowLive(val);
-    // Keep drawer in sync with toggle: turning off hides it, turning on shows it.
-    // This is safe now because transcriptAnimated=true at this point, so the
-    // drawer animates smoothly instead of snapping.
-    setTranscriptOpen(val);
+    setTranscriptOpen(val); // keep drawer in sync; safe because transcriptAnimated=true here
   }
 
-  /* ── Space shortcut ── */
-  startListeningRef.current = startListening;
-  stopListeningRef.current  = stopListening;
+  /* ── Keep stable refs up to date every render ── */
+  startListeningRef.current   = startListening;
+  stopListeningRef.current    = stopListening;
+  buildRecognitionRef.current = buildRecognition;
+  safeStartRef.current        = safeStart;
 
+  /* ── Space key shortcut (desktop) ── */
   useEffect(() => {
     function onKeyDown(e) {
       if (e.code !== "Space") return;
@@ -552,13 +652,11 @@ export default function App() {
         </div>
       </div>
 
-      {/* ── Status bar + Start/Stop action ── */}
+      {/* ── Status bar + Start/Stop ── */}
       <div className="statusRow">
         <StatusBar status={status} wsStatus={wsStatus} mode={mode} />
         {unsupported ? (
-          <span className="unsupportedNote">
-            ⚠️ Use Chrome or Edge
-          </span>
+          <span className="unsupportedNote">⚠️ Use Chrome on Android or Safari on iOS</span>
         ) : (
           <button
             className={`actionBtn${isListening ? " actionBtnStop" : " actionBtnStart"}`}
@@ -581,7 +679,7 @@ export default function App() {
         />
       </div>
 
-      {/* ── Live transcript — collapsible drawer ── */}
+      {/* ── Live transcript ── */}
       <TranscriptPanel
         transcript={finalText}
         interimText={showLive ? interimText : ""}
