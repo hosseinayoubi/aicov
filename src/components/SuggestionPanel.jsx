@@ -14,6 +14,7 @@ export default function SuggestionPanel({ text, isListening, status }) {
       .catch(() => {});
   }
 
+  // ── Has a suggestion to show ──────────────────────────────────────────
   if (text) {
     return (
       <div className="suggestionWrapper">
@@ -29,9 +30,20 @@ export default function SuggestionPanel({ text, isListening, status }) {
     );
   }
 
+  // ── Idle — not listening and no suggestion yet ────────────────────────
+  if (status === "idle" && !isListening) {
+    return (
+      <div className="suggestionIdle">
+        Press Start to begin…
+      </div>
+    );
+  }
+
+  // ── Active states: listening / thinking / replying ────────────────────
   const label =
     status === "thinking" ? "Thinking" :
-    status === "replying" ? "Replying" : "Listening";
+    status === "replying" ? "Replying" :
+    "Listening";
 
   return (
     <div className="listeningState">
