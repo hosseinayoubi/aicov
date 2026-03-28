@@ -28,11 +28,10 @@ body {
 .appShell {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  min-height: 100vh;
+  gap: 12px;
   max-width: 720px;
   margin: 0 auto;
-  padding: 0 16px 100px; /* bottom padding for fixed bottomBar */
+  padding: 0 16px 40px;
 }
 
 /* ── Header ────────────────────────────────────────────────────────────────── */
@@ -46,7 +45,6 @@ body {
   flex-wrap: wrap;
 }
 
-/* Brand: animated dot + title */
 .brand {
   display: flex;
   align-items: center;
@@ -54,6 +52,7 @@ body {
   flex-shrink: 0;
 }
 
+/* Animated presence dot */
 .logoDot {
   width: 10px;
   height: 10px;
@@ -92,7 +91,7 @@ body {
   margin-top: 1px;
 }
 
-/* Controls row: chips + toggle */
+/* Controls: mode chips + toggle */
 .controlsRow {
   display: flex;
   align-items: center;
@@ -129,7 +128,7 @@ body {
   font-weight: 600;
 }
 
-/* ── Toggle (live transcript) ───────────────────────────────────────────────── */
+/* ── Toggle ─────────────────────────────────────────────────────────────────── */
 .toggle {
   display: flex;
   align-items: center;
@@ -152,7 +151,7 @@ body {
   border-radius: 9px;
   position: relative;
   flex-shrink: 0;
-  transition: background 0.2s;
+  transition: background 0.2s, border-color 0.2s;
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
@@ -184,18 +183,27 @@ body {
   white-space: nowrap;
 }
 
+/* ── Status row: status bar + Start/Stop action ─────────────────────────────── */
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 /* ── Status bar ─────────────────────────────────────────────────────────────── */
 .statusBar {
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 0.74rem;
   color: rgba(255, 255, 255, 0.4);
-  padding: 5px 12px;
+  padding: 6px 12px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .statusBar b {
@@ -220,6 +228,47 @@ body {
 .statusDot.yellow { background: #facc15; box-shadow: 0 0 6px #facc1588; }
 .statusDot.blue   { background: #60a5fa; box-shadow: 0 0 6px #60a5fa88; }
 .statusDot.red    { background: #f87171; box-shadow: 0 0 6px #f8717188; }
+
+/* ── Action button (Start / Stop) ───────────────────────────────────────────── */
+.actionBtn {
+  flex-shrink: 0;
+  padding: 7px 26px;
+  border-radius: 8px;
+  border: none;
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: all 0.18s;
+}
+
+.actionBtnStart {
+  background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+  color: #fff;
+  box-shadow: 0 3px 14px rgba(99, 102, 241, 0.4);
+}
+
+.actionBtnStart:hover {
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.6);
+  transform: translateY(-1px);
+}
+
+.actionBtnStart:active {
+  transform: translateY(0);
+}
+
+.actionBtnStop {
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #fca5a5;
+}
+
+.actionBtnStop:hover {
+  background: rgba(248, 113, 113, 0.18);
+  border-color: rgba(248, 113, 113, 0.55);
+}
 
 /* ── Cards ──────────────────────────────────────────────────────────────────── */
 .card {
@@ -301,7 +350,7 @@ body {
   word-break: break-word;
 }
 
-/* Idle placeholder inside suggestion card */
+/* Idle placeholder */
 .suggestionIdle {
   font-size: 0.82rem;
   color: rgba(255, 255, 255, 0.18);
@@ -337,85 +386,13 @@ body {
 
 /* ── Unsupported note ───────────────────────────────────────────────────────── */
 .unsupportedNote {
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   color: rgba(251, 191, 36, 0.8);
-  line-height: 1.5;
-  padding: 8px 12px;
-  background: rgba(251, 191, 36, 0.06);
-  border: 1px solid rgba(251, 191, 36, 0.14);
-  border-radius: 8px;
+  white-space: nowrap;
 }
 
-/* ── Fixed bottom bar ───────────────────────────────────────────────────────── */
-.bottomBar {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 24px;
-  background: rgba(11, 18, 32, 0.96);
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  z-index: 100;
-  gap: 12px;
-}
-
-/* Start / Stop buttons */
-.btn {
-  padding: 10px 32px;
-  border-radius: 10px;
-  border: none;
-  font-size: 0.88rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.18s;
-}
-
-.btnStart {
-  background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
-  color: #fff;
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35);
-}
-
-.btnStart:hover {
-  box-shadow: 0 4px 22px rgba(99, 102, 241, 0.55);
-  transform: translateY(-1px);
-}
-
-.btnStart:active {
-  transform: translateY(0);
-}
-
-.btnStop {
-  background: rgba(248, 113, 113, 0.1);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  color: #fca5a5;
-}
-
-.btnStop:hover {
-  background: rgba(248, 113, 113, 0.18);
-  border-color: rgba(248, 113, 113, 0.55);
-}
-
-/* Meta info (domain + auto-stop note) */
-.meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  font-size: 0.67rem;
-  color: rgba(255, 255, 255, 0.2);
-  line-height: 1.5;
-  gap: 1px;
-}
-
-/* ── Responsive: narrow screens ─────────────────────────────────────────────── */
-@media (max-width: 480px) {
+/* ── Responsive ─────────────────────────────────────────────────────────────── */
+@media (max-width: 520px) {
   .appTop {
     flex-direction: column;
     align-items: flex-start;
@@ -425,16 +402,14 @@ body {
     width: 100%;
   }
 
-  .bottomBar {
-    padding: 10px 16px;
+  .statusRow {
+    flex-direction: column;
+    align-items: stretch;
   }
 
-  .btn {
-    padding: 9px 22px;
-    font-size: 0.84rem;
-  }
-
-  .meta {
-    display: none;
+  .actionBtn {
+    width: 100%;
+    padding: 10px;
+    font-size: 0.88rem;
   }
 }
