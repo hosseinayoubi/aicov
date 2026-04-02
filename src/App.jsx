@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import StatusBar from "./components/StatusBar.jsx";
+import StatusBar      from "./components/StatusBar.jsx";
 import ConversationLog from "./components/ConversationLog.jsx";
-import ChatBox from "./components/ChatBox.jsx";
+import ChatBox        from "./components/ChatBox.jsx";
 import TranscriptPanel from "./components/TranscriptPanel.jsx";
+import InterviewSetup from "./components/InterviewSetup.jsx";
+import InterviewView  from "./components/InterviewView.jsx";
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 function makeId() {
@@ -25,20 +27,17 @@ const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(
 );
 
 /* ── Tuning ───────────────────────────────────────────────────────────── */
-// Prioritise accuracy over speed.
-// Mobile SR finalises words slower and is less reliable — give it much more room.
 const SILENCE_MS       = IS_MOBILE ? 1400 : 700;
 const FAST_FLUSH_WORDS = IS_MOBILE ? 14   : 9;
 const GATE_MS = IS_MOBILE
-  ? { proactive: 5000, deep: 4000 }
-  : { proactive: 2500, deep: 1500 };
+  ? { proactive: 5000, deep: 4000, interview: 4500 }
+  : { proactive: 2500, deep: 1500, interview: 2000 };
 
 const AUTO_STOP_MS        = 2 * 60 * 1000;
 const RESTART_DEBOUNCE_MS = IS_MOBILE ? 700 : 120;
 const MAX_HISTORY_TURNS   = 3;
 const MAX_LOG_ENTRIES     = 8;
 
-// VAD — desktop only (see startVAD)
 const VAD_INTERVAL_MS = 50;
 const VAD_THRESHOLD   = 0.012;
 const VAD_SILENCE_MS  = 900;
@@ -58,25 +57,25 @@ export default function App() {
   const [isListening,        setIsListening]        = useState(false);
   const [conversationLog,    setConversationLog]    = useState([]);
 
+  // Interview-specific state
+  const [cv,                 setCv]                 = useState("");
+  const [jd,                 setJd]                 = useState("");
+  const [speaker,            setSpeaker]            = useState("interviewer"); // 'interviewer' | 'me'
+  const [interviewSetupDone, setInterviewSetupDone] = useState(false);
+
   /* ── Refs ── */
   const isListeningRef  = useRef(false);
   const modeRef         = useRef("proactive");
   const systemPromptRef = useRef("You are a proactive AI copilot.");
   const showLiveRef     = useRef(true);
+  const cvRef           = useRef("");
+  const jdRef           = useRef("");
+  const speakerRef      = useRef("interviewer");
 
   const recognitionRef = useRef(null);
   const recActiveRef   = useRef(false);
   const sessionRef     = useRef(0);
 
-  // ── Cumulative-finals tracker ──────────────────────────────────────────
-  // Chrome (especially mobile) fires isFinal multiple times for overlapping
-  // portions of the same utterance, and can re-deliver all previous finals
-  // with resultIndex=0 after an internal restart.
-  //
-  // Fix: for each SR instance, we rebuild the COMPLETE finals text from
-  // e.results[0..N] every time. We keep committedTextRef as the portion
-  // already added to the buffer. Only the NEW suffix is processed.
-  // Reset on every buildRecognition call (new SR instance = clean slate).
   const committedTextRef = useRef("");
 
   const bufferFinalRef   = useRef("");
@@ -93,7 +92,7 @@ export default function App() {
   const autoStopTimerRef = useRef(null);
   const restartTimerRef  = useRef(null);
 
-  // VAD (desktop only)
+  // VAD
   const audioCtxRef       = useRef(null);
   const analyserRef       = useRef(null);
   const micStreamRef      = useRef(null);
@@ -101,7 +100,6 @@ export default function App() {
   const lastSpeechTimeRef = useRef(0);
   const vadFlushedRef     = useRef(false);
 
-  // Stable fn refs for effects and visibilitychange handler
   const startListeningRef   = useRef(null);
   const stopListeningRef    = useRef(null);
   const buildRecognitionRef = useRef(null);
@@ -112,8 +110,11 @@ export default function App() {
   useEffect(() => { modeRef.current         = mode;         }, [mode]);
   useEffect(() => { systemPromptRef.current = systemPrompt; }, [systemPrompt]);
   useEffect(() => { showLiveRef.current     = showLive;     }, [showLive]);
+  useEffect(() => { cvRef.current           = cv;           }, [cv]);
+  useEffect(() => { jdRef.current           = jd;           }, [jd]);
+  useEffect(() => { speakerRef.current      = speaker;      }, [speaker]);
 
-  /* ── Drawer animation: only after first paint (prevents initial jump) ── */
+  /* ── Drawer animation ── */
   useEffect(() => {
     const id = requestAnimationFrame(() => setTranscriptAnimated(true));
     return () => cancelAnimationFrame(id);
@@ -143,11 +144,7 @@ export default function App() {
     }, AUTO_STOP_MS);
   }
 
-  /* ── Backend streaming ────────────────────────────────────────────────
-     Each call appends a new entry to conversationLog. Entries accumulate
-     for the whole session — old answers stay visible and readable.
-     Text streams in directly (no typewriter delay).
-  ── */
+  /* ── Backend streaming ── */
   async function sendToBackend(text) {
     const clean = String(text || "").trim();
     if (!clean) return;
@@ -167,7 +164,6 @@ export default function App() {
     setStatus("thinking");
     setWsStatus("connected");
 
-    // Append new streaming entry (keep last MAX_LOG_ENTRIES)
     setConversationLog(prev => [
       ...prev.slice(-(MAX_LOG_ENTRIES - 1)),
       { id: requestId, question: clean, answer: "", streaming: true, mode: entryMode },
@@ -180,11 +176,13 @@ export default function App() {
         method : "POST",
         headers: { "Content-Type": "application/json" },
         body   : JSON.stringify({
-          text  : clean,
-          system: systemPromptRef.current,
-          mode  : entryMode,
+          text   : clean,
+          system : systemPromptRef.current,
+          mode   : entryMode,
           history,
           requestId,
+          cv     : cvRef.current,
+          jd     : jdRef.current,
         }),
         signal: controller.signal,
       });
@@ -212,7 +210,6 @@ export default function App() {
         if (!chunk) continue;
         if (lastRequestIdRef.current !== requestId) return;
         acc += chunk;
-        // Update answer in real time
         setConversationLog(prev => prev.map(e =>
           e.id === requestId ? { ...e, answer: acc } : e
         ));
@@ -229,11 +226,23 @@ export default function App() {
         ];
       }
 
-      // Mark entry complete
       setConversationLog(prev => prev.map(e =>
         e.id === requestId ? { ...e, answer: final, streaming: false } : e
       ));
       setStatus(isListeningRef.current ? "listening" : "idle");
+
+      // ── Interview: auto-switch to "me" mode after suggestion is ready ──
+      // This starts the teleprompter automatically so the candidate
+      // can read while the app records their answer.
+      if (modeRef.current === "interview" && speakerRef.current === "interviewer" && final) {
+        speakerRef.current = "me";
+        setSpeaker("me");
+        setFinalText("");
+        setInterimText("");
+        bufferFinalRef.current   = "";
+        committedTextRef.current = "";
+        lastSentHashRef.current  = "";
+      }
 
     } catch (e) {
       if (e?.name === "AbortError") return;
@@ -259,6 +268,16 @@ export default function App() {
   function flushBuffer() {
     const t = (bufferFinalRef.current || "").trim();
     if (!t) return;
+
+    // In interview mode, only send to AI when interviewer is speaking.
+    // When it's "me" mode, just record — don't trigger a suggestion.
+    if (modeRef.current === "interview" && speakerRef.current === "me") {
+      bufferFinalRef.current = "";
+      vadFlushedRef.current  = true;
+      clearFlushTimers();
+      return;
+    }
+
     bufferFinalRef.current = "";
     vadFlushedRef.current  = true;
     clearFlushTimers();
@@ -293,10 +312,7 @@ export default function App() {
     }
   }
 
-  /* ── VAD (desktop only) ───────────────────────────────────────────────
-     On mobile, VAD calls getUserMedia which conflicts with SR's own
-     internal getUserMedia — the mic is exclusive so one silently fails.
-     Mobile uses timer-only flush (SILENCE_MS / GATE_MS above). ── */
+  /* ── VAD ── */
   async function startVAD() {
     if (IS_MOBILE) return;
     try {
@@ -376,27 +392,14 @@ export default function App() {
     }
   }
 
-  /* ── Build fresh SpeechRecognition ────────────────────────────────────
-     Called on every startListening (and visibilitychange recovery).
-     mySession = sessionRef.current at creation — stale events discarded.
-
-     KEY FIX — Cumulative finals deduplication:
-     We rebuild allFinals from ALL e.results[0..N] on every onresult call.
-     committedTextRef tracks how many characters of that string we've
-     already added to the buffer. Only the NEW suffix is processed.
-
-     This eliminates duplicates regardless of how Chrome delivers finals:
-     - Repeated isFinal for overlapping text → no-op (nothing new beyond committed)
-     - Re-delivery after restart with resultIndex=0 → same, all already committed
-     - committedTextRef resets on buildRecognition → correct per-instance tracking
-  ── */
+  /* ── Build SpeechRecognition ── */
   function buildRecognition() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setStatus("unsupported"); return false; }
 
     try { recognitionRef.current?.stop?.(); } catch {}
-    recActiveRef.current   = false;
-    committedTextRef.current = ""; // RESET for new SR instance
+    recActiveRef.current     = false;
+    committedTextRef.current = "";
 
     const rec           = new SR();
     rec.continuous      = true;
@@ -411,11 +414,7 @@ export default function App() {
     rec.onresult = (e) => {
       if (sessionRef.current !== mySession) return;
 
-      // ── Build complete finals text for this SR instance ──────────────
-      // Loop ALL results (0..length-1), not just from e.resultIndex.
-      // This way we always have the complete picture and can diff against
-      // what we've already committed.
-      let allFinals = "";
+      let allFinals   = "";
       let lastInterim = "";
 
       for (let i = 0; i < e.results.length; i++) {
@@ -424,12 +423,10 @@ export default function App() {
         if (r.isFinal) {
           allFinals += (allFinals ? " " : "") + t.trim();
         } else {
-          // Take only the most recent interim (last non-final result)
           lastInterim = t.trim();
         }
       }
 
-      // ── Only process the truly NEW portion ──────────────────────────
       if (allFinals.length > committedTextRef.current.length) {
         const newChunk = allFinals
           .slice(committedTextRef.current.length)
@@ -464,7 +461,6 @@ export default function App() {
         return;
       }
 
-      // audio-capture: mic busy — some browsers skip onend after this
       if (e.error === "audio-capture") {
         clearTimeout(restartTimerRef.current);
         restartTimerRef.current = setTimeout(() => {
@@ -474,17 +470,14 @@ export default function App() {
         }, IS_MOBILE ? 1500 : 600);
         return;
       }
-      // no-speech, network, aborted → onend fires → normal restart path
     };
 
     rec.onend = () => {
       recActiveRef.current = false;
       if (!isListeningRef.current) return;
-      // Do NOT increment sessionRef — within-session restart, mySession valid
       clearTimeout(restartTimerRef.current);
       restartTimerRef.current = setTimeout(() => {
         if (isListeningRef.current && sessionRef.current === mySession) {
-          // Reset committedTextRef for the new micro-session that Chrome starts
           committedTextRef.current = "";
           safeStartRef.current?.();
         }
@@ -514,11 +507,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── Mobile: screen-lock / background recovery ───────────────────────
-     When user locks screen or switches apps, SR stops. On some mobile
-     browsers start() silently fails while locked. On return, isListening
-     is true but recActive is false — nothing works.
-     visibilitychange fires on "return to foreground" and rebuilds SR. ── */
+  /* ── Mobile: screen-lock recovery ── */
   useEffect(() => {
     if (!IS_MOBILE) return;
 
@@ -558,13 +547,20 @@ export default function App() {
     setStatus("listening");
     setIsListening(true);
     isListeningRef.current = true;
+
+    // Reset speaker to interviewer when starting in interview mode
+    if (modeRef.current === "interview") {
+      speakerRef.current = "interviewer";
+      setSpeaker("interviewer");
+    }
+
     resetAutoStop();
 
     const ok = buildRecognition();
     if (!ok) return;
 
     stopVAD();
-    await startVAD(); // no-op on mobile
+    await startVAD();
     safeStart();
   }
 
@@ -582,7 +578,11 @@ export default function App() {
     const t = (bufferFinalRef.current || "").trim();
     bufferFinalRef.current = "";
     pendingTextRef.current = "";
-    if (t) sendToBackend(t);
+
+    // Only send remaining buffer if not in "me" mode
+    if (t && !(modeRef.current === "interview" && speakerRef.current === "me")) {
+      sendToBackend(t);
+    }
 
     stopVAD();
     try { recognitionRef.current?.stop?.(); } catch {}
@@ -601,17 +601,50 @@ export default function App() {
     setTranscriptOpen(val);
   }
 
+  function handleModeChange(newMode) {
+    setMode(newMode);
+    modeRef.current = newMode;
+    if (newMode !== "interview") {
+      setInterviewSetupDone(false);
+      setSpeaker("interviewer");
+      speakerRef.current = "interviewer";
+    }
+  }
+
+  function handleSpeakerToggle(newSpeaker) {
+    speakerRef.current = newSpeaker;
+    setSpeaker(newSpeaker);
+    clearTranscript();
+  }
+
   /* ── Keep stable refs current ── */
   startListeningRef.current   = startListening;
   stopListeningRef.current    = stopListening;
   buildRecognitionRef.current = buildRecognition;
   safeStartRef.current        = safeStart;
 
-  /* ── Space shortcut (desktop) ── */
+  /* ── Keyboard shortcuts ── */
   useEffect(() => {
     function onKeyDown(e) {
-      if (e.code !== "Space") return;
       const tag = document.activeElement?.tagName;
+
+      // Tab → toggle speaker in interview mode
+      if (e.code === "Tab" && modeRef.current === "interview") {
+        if (tag === "TEXTAREA" || tag === "INPUT") return;
+        e.preventDefault();
+        const next = speakerRef.current === "interviewer" ? "me" : "interviewer";
+        speakerRef.current = next;
+        setSpeaker(next);
+        setFinalText("");
+        setInterimText("");
+        bufferFinalRef.current   = "";
+        committedTextRef.current = "";
+        lastSentHashRef.current  = "";
+        return;
+      }
+
+      // Space → start/stop listening
+      if (e.code !== "Space") return;
       if (tag === "TEXTAREA" || tag === "INPUT") return;
       e.preventDefault();
       if (isListeningRef.current) stopListeningRef.current?.();
@@ -639,12 +672,16 @@ export default function App() {
         <div className="controlsRow">
           <button
             className={`chip${mode === "proactive" ? " active" : ""}`}
-            onClick={() => setMode("proactive")}
+            onClick={() => handleModeChange("proactive")}
           >⚡ Proactive</button>
           <button
             className={`chip${mode === "deep" ? " active" : ""}`}
-            onClick={() => setMode("deep")}
+            onClick={() => handleModeChange("deep")}
           >🎧 Deep</button>
+          <button
+            className={`chip${mode === "interview" ? " active" : ""}`}
+            onClick={() => handleModeChange("interview")}
+          >🎯 Interview</button>
           <label className="toggle">
             <input
               type="checkbox"
@@ -672,31 +709,57 @@ export default function App() {
         )}
       </div>
 
-      {/* ── Conversation log ── */}
-      <div className="card">
-        <ConversationLog
-          log={conversationLog}
-          status={status}
-          isListening={isListening}
-          mode={mode}
-        />
-      </div>
+      {/* ── Mode-specific content ── */}
+      {mode === "interview" ? (
+        <div className="card">
+          {!interviewSetupDone ? (
+            <InterviewSetup
+              cv={cv}   setCV={setCv}
+              jd={jd}   setJD={setJd}
+              onStart={() => setInterviewSetupDone(true)}
+            />
+          ) : (
+            <InterviewView
+              conversationLog={conversationLog}
+              finalText={finalText}
+              interimText={showLive ? interimText : ""}
+              status={status}
+              isListening={isListening}
+              speaker={speaker}
+              onSpeakerToggle={handleSpeakerToggle}
+              onEditSetup={() => setInterviewSetupDone(false)}
+            />
+          )}
+        </div>
+      ) : (
+        <>
+          {/* ── Conversation log ── */}
+          <div className="card">
+            <ConversationLog
+              log={conversationLog}
+              status={status}
+              isListening={isListening}
+              mode={mode}
+            />
+          </div>
 
-      {/* ── Live transcript ── */}
-      <TranscriptPanel
-        transcript={finalText}
-        interimText={showLive ? interimText : ""}
-        isOpen={transcriptOpen}
-        animated={transcriptAnimated}
-        onToggle={() => setTranscriptOpen((o) => !o)}
-        onClear={clearTranscript}
-        mode={mode}
-      />
+          {/* ── Live transcript ── */}
+          <TranscriptPanel
+            transcript={finalText}
+            interimText={showLive ? interimText : ""}
+            isOpen={transcriptOpen}
+            animated={transcriptAnimated}
+            onToggle={() => setTranscriptOpen((o) => !o)}
+            onClear={clearTranscript}
+            mode={mode}
+          />
 
-      {/* ── Context / System Prompt ── */}
-      <div className="card">
-        <ChatBox systemPrompt={systemPrompt} setSystemPrompt={setSystemPrompt} />
-      </div>
+          {/* ── Context / System Prompt ── */}
+          <div className="card">
+            <ChatBox systemPrompt={systemPrompt} setSystemPrompt={setSystemPrompt} />
+          </div>
+        </>
+      )}
 
     </div>
   );
