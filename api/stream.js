@@ -1,11 +1,5 @@
 /**
  * Vercel Serverless Function: /api/stream
- * - Proxies xAI Chat Completions with stream=true (SSE upstream)
- * - Streams plain text back to the browser
- * - Supports conversation history for multi-turn context
- *
- * Env required: XAI_API_KEY
- * Env optional: XAI_MODEL, FRONTEND_ORIGIN
  */
 const DEFAULT_MODEL = "grok-4-1-fast-non-reasoning";
 
@@ -20,10 +14,30 @@ function normalizeModelName(model) {
   return m.replace("grok-4.1-", "grok-4-1-").replace("grok-4.1", "grok-4-1");
 }
 
-function buildSystemPrompt({ mode, userContext }) {
-  // ── Proactive: allow 2-3 sentences (up from 1-2), cap at 60 words.
-  // Removed "silent" framing so the model is more willing to engage.
-  // Added "be specific and actionable" to improve suggestion quality.
+function buildSystemPrompt({ mode, userContext, cv, jd }) {
+  const cleanCtx = String(userContext ?? "").trim();
+  const cleanCV  = String(cv  ?? "").trim();
+  const cleanJD  = String(jd  ?? "").trim();
+
+  if (mode === "interview") {
+    const cvSection = cleanCV ? `\n\n--- CANDIDATE CV ---\n${cleanCV}\n---` : "";
+    const jdSection = cleanJD ? `\n\n--- JOB DESCRIPTION ---\n${cleanJD}\n---` : "";
+    return (
+      "You are a real-time interview coach assisting a candidate LIVE during a job interview.\n\n" +
+      "When you receive an interview question, respond in this EXACT plain-text format:\n\n" +
+      "ANSWER:\n[Direct, confident 2-3 sentence answer tailored to the role]\n\n" +
+      "KEY POINTS:\n- [Specific talking point 1]\n- [Specific talking point 2]\n- [Specific talking point 3]\n\n" +
+      "FROM YOUR CV:\n[One concrete achievement or experience from the CV to weave in]\n\n" +
+      "Rules:\n" +
+      "- ANSWER must be speakable in under 30 seconds.\n" +
+      "- Be specific, confident, and match the job requirements.\n" +
+      "- Never use markdown, asterisks, or pound signs.\n" +
+      "- Always respond in English." +
+      cvSection +
+      jdSection
+    );
+  }
+
   const PROACTIVE_SYSTEM_BASE =
     "You are a real-time AI copilot monitoring a live conversation. " +
     "Give 1-3 short, specific, actionable suggestions (max 60 words total). " +
@@ -40,20 +54,16 @@ function buildSystemPrompt({ mode, userContext }) {
     "If the input is unclear or incomplete, ask exactly one short clarifying question instead of guessing. " +
     "Always respond in English.";
 
-  const cleanCtx = String(userContext ?? "").trim();
   const base = mode === "deep" ? DEEP_SYSTEM_BASE : PROACTIVE_SYSTEM_BASE;
   return cleanCtx ? `${base}\n\nContext:\n${cleanCtx}` : base;
 }
 
 function getGenParams({ mode }) {
-  if (mode === "deep") return { temperature: 0.4, max_tokens: 320 };
-  // ↑ max_tokens 96 → 180: allows 2-3 sentences in proactive mode
-  return { temperature: 0.25, max_tokens: 180 };
+  if (mode === "deep")      return { temperature: 0.4,  max_tokens: 320 };
+  if (mode === "interview") return { temperature: 0.3,  max_tokens: 450 };
+  return                           { temperature: 0.25, max_tokens: 180 };
 }
 
-/**
- * Sanitize and cap conversation history from the client.
- */
 function sanitizeHistory(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -103,17 +113,19 @@ module.exports = async (req, res) => {
   try { body = await readJsonBody(req); }
   catch { res.statusCode = 400; return res.end("Invalid JSON body"); }
 
-  const text        = String(body.text || "").trim();
-  const userContext = String(body.system || body.userContext || "").trim();
-  const modeIn      = String(body.mode || "proactive").trim().toLowerCase();
-  const mode        = modeIn === "deep" ? "deep" : "proactive";
+  const text        = String(body.text        || "").trim();
+  const userContext = String(body.system      || body.userContext || "").trim();
+  const cv          = String(body.cv          || "").slice(0, 8000);
+  const jd          = String(body.jd          || "").slice(0, 4000);
+  const modeIn      = String(body.mode        || "proactive").trim().toLowerCase();
+  const mode        = ["deep", "interview"].includes(modeIn) ? modeIn : "proactive";
   const history     = sanitizeHistory(body.history);
 
   if (!text)              { res.statusCode = 400; return res.end("Missing text"); }
   if (text.length > 6000) { res.statusCode = 413; return res.end("Text too long"); }
 
   const model         = normalizeModelName(process.env.XAI_MODEL || DEFAULT_MODEL);
-  const systemContent = buildSystemPrompt({ mode, userContext });
+  const systemContent = buildSystemPrompt({ mode, userContext, cv, jd });
   const { temperature, max_tokens } = getGenParams({ mode });
   const safeMaxTokens = clamp(max_tokens, 16, 800);
 
