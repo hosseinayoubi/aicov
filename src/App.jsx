@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import StatusBar      from "./components/StatusBar.jsx";
-import ConversationLog from "./components/ConversationLog.jsx";
-import ChatBox        from "./components/ChatBox.jsx";
-import TranscriptPanel from "./components/TranscriptPanel.jsx";
-import InterviewSetup from "./components/InterviewSetup.jsx";
-import InterviewView  from "./components/InterviewView.jsx";
+import StatusBar        from "./components/StatusBar.jsx";
+import ConversationLog  from "./components/ConversationLog.jsx";
+import ChatBox          from "./components/ChatBox.jsx";
+import TranscriptPanel  from "./components/TranscriptPanel.jsx";
+import InterviewSetup   from "./components/InterviewSetup.jsx";
+import InterviewView    from "./components/InterviewView.jsx";
 
-/* ── Helpers ──────────────────────────────────────────────────────────── */
+/* ── Helpers ── */
 function makeId() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
@@ -21,12 +21,12 @@ function hashText(s) {
   return (h >>> 0).toString(16);
 }
 
-/* ── Platform ─────────────────────────────────────────────────────────── */
+/* ── Platform ── */
 const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(
   typeof navigator !== "undefined" ? navigator.userAgent : ""
 );
 
-/* ── Tuning ───────────────────────────────────────────────────────────── */
+/* ── Tuning ── */
 const SILENCE_MS       = IS_MOBILE ? 1400 : 700;
 const FAST_FLUSH_WORDS = IS_MOBILE ? 14   : 9;
 const GATE_MS = IS_MOBILE
@@ -60,7 +60,7 @@ export default function App() {
   // Interview-specific state
   const [cv,                 setCv]                 = useState("");
   const [jd,                 setJd]                 = useState("");
-  const [speaker,            setSpeaker]            = useState("interviewer"); // 'interviewer' | 'me'
+  const [speaker,            setSpeaker]            = useState("interviewer");
   const [interviewSetupDone, setInterviewSetupDone] = useState(false);
 
   /* ── Refs ── */
@@ -231,19 +231,6 @@ export default function App() {
       ));
       setStatus(isListeningRef.current ? "listening" : "idle");
 
-      // ── Interview: auto-switch to "me" mode after suggestion is ready ──
-      // This starts the teleprompter automatically so the candidate
-      // can read while the app records their answer.
-      if (modeRef.current === "interview" && speakerRef.current === "interviewer" && final) {
-        speakerRef.current = "me";
-        setSpeaker("me");
-        setFinalText("");
-        setInterimText("");
-        bufferFinalRef.current   = "";
-        committedTextRef.current = "";
-        lastSentHashRef.current  = "";
-      }
-
     } catch (e) {
       if (e?.name === "AbortError") return;
       console.error("Fetch failed:", e);
@@ -269,8 +256,7 @@ export default function App() {
     const t = (bufferFinalRef.current || "").trim();
     if (!t) return;
 
-    // In interview mode, only send to AI when interviewer is speaking.
-    // When it's "me" mode, just record — don't trigger a suggestion.
+    // In interview mode, only send to AI when interviewer is speaking
     if (modeRef.current === "interview" && speakerRef.current === "me") {
       bufferFinalRef.current = "";
       vadFlushedRef.current  = true;
@@ -281,6 +267,7 @@ export default function App() {
     bufferFinalRef.current = "";
     vadFlushedRef.current  = true;
     clearFlushTimers();
+
     if (isReplyingRef.current) {
       pendingTextRef.current = (pendingTextRef.current + " " + t).trim();
       return;
@@ -367,7 +354,7 @@ export default function App() {
   function stopVAD() {
     clearInterval(vadLoopRef.current);
     vadLoopRef.current = null;
-    try { micStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
+    try { micStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
     try { audioCtxRef.current?.close(); } catch {}
     micStreamRef.current = null;
     audioCtxRef.current  = null;
@@ -488,7 +475,7 @@ export default function App() {
     return true;
   }
 
-  /* ── Mount ── */
+  /* ── Mount / Unmount ── */
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) setStatus("unsupported");
@@ -507,14 +494,14 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── Mobile: screen-lock recovery ── */
+  /* ── Mobile screen-lock recovery ── */
   useEffect(() => {
     if (!IS_MOBILE) return;
 
     function onVisible() {
-      if (document.hidden) return;
-      if (!isListeningRef.current) return;
-      if (recActiveRef.current) return;
+      if (document.hidden)          return;
+      if (!isListeningRef.current)  return;
+      if (recActiveRef.current)     return;
 
       clearTimeout(restartTimerRef.current);
       sessionRef.current++;
@@ -548,7 +535,6 @@ export default function App() {
     setIsListening(true);
     isListeningRef.current = true;
 
-    // Reset speaker to interviewer when starting in interview mode
     if (modeRef.current === "interview") {
       speakerRef.current = "interviewer";
       setSpeaker("interviewer");
@@ -579,7 +565,6 @@ export default function App() {
     bufferFinalRef.current = "";
     pendingTextRef.current = "";
 
-    // Only send remaining buffer if not in "me" mode
     if (t && !(modeRef.current === "interview" && speakerRef.current === "me")) {
       sendToBackend(t);
     }
@@ -617,6 +602,19 @@ export default function App() {
     clearTranscript();
   }
 
+  // ── Called by InterviewView when teleprompter finishes ──
+  function handleAnswerRead() {
+    if (speakerRef.current !== "interviewer") {
+      speakerRef.current = "interviewer";
+      setSpeaker("interviewer");
+      setFinalText("");
+      setInterimText("");
+      bufferFinalRef.current   = "";
+      committedTextRef.current = "";
+      lastSentHashRef.current  = "";
+    }
+  }
+
   /* ── Keep stable refs current ── */
   startListeningRef.current   = startListening;
   stopListeningRef.current    = stopListening;
@@ -650,6 +648,7 @@ export default function App() {
       if (isListeningRef.current) stopListeningRef.current?.();
       else startListeningRef.current?.();
     }
+
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
@@ -686,7 +685,7 @@ export default function App() {
             <input
               type="checkbox"
               checked={showLive}
-              onChange={(e) => handleLiveToggle(e.target.checked)}
+              onChange={e => handleLiveToggle(e.target.checked)}
             />
             <span className="toggleTrack" />
             <span className="toggleLabel">Live transcript</span>
@@ -728,12 +727,12 @@ export default function App() {
               speaker={speaker}
               onSpeakerToggle={handleSpeakerToggle}
               onEditSetup={() => setInterviewSetupDone(false)}
+              onAnswerRead={handleAnswerRead}
             />
           )}
         </div>
       ) : (
         <>
-          {/* ── Conversation log ── */}
           <div className="card">
             <ConversationLog
               log={conversationLog}
@@ -743,18 +742,16 @@ export default function App() {
             />
           </div>
 
-          {/* ── Live transcript ── */}
           <TranscriptPanel
             transcript={finalText}
             interimText={showLive ? interimText : ""}
             isOpen={transcriptOpen}
             animated={transcriptAnimated}
-            onToggle={() => setTranscriptOpen((o) => !o)}
+            onToggle={() => setTranscriptOpen(o => !o)}
             onClear={clearTranscript}
             mode={mode}
           />
 
-          {/* ── Context / System Prompt ── */}
           <div className="card">
             <ChatBox systemPrompt={systemPrompt} setSystemPrompt={setSystemPrompt} />
           </div>
